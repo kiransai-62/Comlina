@@ -1,8 +1,8 @@
 'use client';
 
-import React, { useEffect, useState, Suspense } from 'react';
+import React, { useEffect, useState, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { CheckCircle, AlertCircle, Loader2 } from 'lucide-react';
+import { CheckCircle, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import { instagramApi } from '@/features/instagram/api';
 
 function CallbackContent() {
@@ -10,6 +10,9 @@ function CallbackContent() {
   const searchParams = useSearchParams();
   const [status, setStatus] = useState<'loading' | 'success' | 'error'>('loading');
   const [errorMessage, setErrorMessage] = useState<string>('');
+  const [isRetrying, setIsRetrying] = useState<boolean>(false);
+  const [isConnectingDev, setIsConnectingDev] = useState<boolean>(false);
+  const exchangeAttemptedRef = useRef<boolean>(false);
 
   useEffect(() => {
     const errorParam = searchParams.get('error') || searchParams.get('error_message') || searchParams.get('message');
@@ -27,6 +30,10 @@ function CallbackContent() {
       setErrorMessage('No valid authorization code was returned from Meta.');
       return;
     }
+
+    // Prevent double execution in React 18 Strict Mode
+    if (exchangeAttemptedRef.current) return;
+    exchangeAttemptedRef.current = true;
 
     // Instagram often appends #_ to the redirect URI
     if (code.endsWith('#_')) {
@@ -67,7 +74,7 @@ function CallbackContent() {
 
       {status === 'error' && (
         <div className="space-y-4">
-          <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
+          <AlertCircle className="w-10 h-10 text-red-500 mx-auto" strokeWidth={1.75} />
           <h2 className="font-bold text-base text-[#111110]">
             {errorMessage.toLowerCase().includes('already') ? 'Instagram Account Already Registered' : 'Connection Failed'}
           </h2>
@@ -91,7 +98,9 @@ function CallbackContent() {
             ) : (
               <button
                 type="button"
+                disabled={isRetrying}
                 onClick={async () => {
+                  setIsRetrying(true);
                   try {
                     const redirectUri = window.location.origin + '/connect/instagram';
                     const resp = await instagramApi.getConnectUrl(redirectUri);
@@ -104,11 +113,35 @@ function CallbackContent() {
                     router.push('/dashboard/instagram-accounts');
                   }
                 }}
-                className="w-full sm:w-auto px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+                className="w-full sm:w-auto px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-75 flex items-center justify-center gap-1.5"
               >
-                Try again
+                {isRetrying && <Loader2 className="w-3.5 h-3.5 animate-spin" />}
+                <span>Try again</span>
               </button>
             )}
+
+            {process.env.NODE_ENV === 'development' && !errorMessage.toLowerCase().includes('already') && (
+              <button
+                type="button"
+                disabled={isConnectingDev}
+                onClick={async () => {
+                  try {
+                    setIsConnectingDev(true);
+                    await instagramApi.connectDevAccount();
+                    setStatus('success');
+                    setTimeout(() => router.push('/dashboard/instagram-accounts'), 1200);
+                  } catch (devErr: any) {
+                    setIsConnectingDev(false);
+                    setErrorMessage(devErr.message || 'Failed to connect dev account.');
+                  }
+                }}
+                className="w-full sm:w-auto px-4 py-2 bg-[#15803D] hover:bg-[#166534] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer disabled:opacity-75 flex items-center justify-center gap-1.5"
+              >
+                {isConnectingDev ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <ShieldCheck className="w-3.5 h-3.5" />}
+                <span>Dev Account</span>
+              </button>
+            )}
+
             <button
               type="button"
               onClick={() => router.push('/dashboard/instagram-accounts')}

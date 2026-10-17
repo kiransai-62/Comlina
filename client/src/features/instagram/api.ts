@@ -32,7 +32,7 @@ export interface NormalizedInstagramMedia {
 export const instagramApi = {
   getMedia: async (accountId?: string): Promise<NormalizedInstagramMedia[]> => {
     const endpoint = accountId ? `/instagram/accounts/${accountId}/media` : '/instagram/media';
-    const res = await api.get<any>(endpoint);
+    const res = await api.get<any>(endpoint, { timeout: 45000 });
     if (Array.isArray(res)) return res;
     if (Array.isArray(res?.data)) return res.data;
     return [];
@@ -42,7 +42,7 @@ export const instagramApi = {
     if (accountId) q.set('account_id', accountId);
     if (after) q.set('after', after);
     try {
-      const res = await api.get<any>(`/instagram/media?${q.toString()}`);
+      const res = await api.get<any>(`/instagram/media?${q.toString()}`, { timeout: 45000 });
       if (Array.isArray(res)) {
         return { data: res, next_cursor: null };
       }
@@ -51,14 +51,19 @@ export const instagramApi = {
       return { data: [], next_cursor: null };
     }
   },
-  listAccounts: () => api.get<ConnectedInstagramAccount[]>('/instagram/accounts'),
+  listAccounts: () => api.get<ConnectedInstagramAccount[]>('/instagram/accounts', { timeout: 30000 }),
   getConnectUrl: (redirectUri?: string) => 
     api.get<{ authorization_url: string; state: string }>(
-      redirectUri ? `/instagram/oauth/connect-url?redirect_uri=${encodeURIComponent(redirectUri)}` : '/instagram/oauth/connect-url'
+      redirectUri ? `/instagram/oauth/connect-url?redirect_uri=${encodeURIComponent(redirectUri)}` : '/instagram/oauth/connect-url',
+      { timeout: 30000 }
     ),
   callback: (code: string, state?: string, redirectUri?: string) => 
-    api.post<ConnectedInstagramAccount>('/instagram/oauth/callback', { code, state, redirect_uri: redirectUri }),
-  syncAccount: (id: string) => api.post<ConnectedInstagramAccount>(`/instagram/accounts/${id}/sync`),
-  connectDevAccount: () => api.post<ConnectedInstagramAccount>('/instagram/connect-dev-account'),
-  disconnect: (id: string) => api.delete<void>(`/instagram/accounts/${id}`)
+    api.post<ConnectedInstagramAccount>(
+      '/instagram/oauth/callback',
+      { code, state, redirect_uri: redirectUri },
+      { timeout: 60000 }
+    ),
+  syncAccount: (id: string) => api.post<ConnectedInstagramAccount>(`/instagram/accounts/${id}/sync`, undefined, { timeout: 45000 }),
+  connectDevAccount: () => api.post<ConnectedInstagramAccount>('/instagram/connect-dev-account', undefined, { timeout: 30000 }),
+  disconnect: (id: string) => api.delete<void>(`/instagram/accounts/${id}`, { timeout: 30000 })
 };

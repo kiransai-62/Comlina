@@ -464,7 +464,29 @@ export default function InstagramAccountsPage() {
                     )}
                   </button>
 
-
+                  {process.env.NODE_ENV === 'development' && (
+                    <button
+                      type="button"
+                      disabled={isAuthorizing}
+                      onClick={async () => {
+                        try {
+                          setIsAuthorizing(true);
+                          await instagramApi.connectDevAccount();
+                          showToast('Verified Instagram Dev Account connected successfully!');
+                          setIsConnectModalOpen(false);
+                          refetch();
+                        } catch (err: any) {
+                          showToast(`Dev connection error: ${err.message || err}`);
+                        } finally {
+                          setIsAuthorizing(false);
+                        }
+                      }}
+                      className="w-full py-2.5 bg-white border border-[#ECECE8] hover:bg-[#F9F9F8] text-[#111110] text-xs font-semibold rounded-lg shadow-2xs flex items-center justify-center gap-2 cursor-pointer transition-all"
+                    >
+                      <ShieldCheck size={14} className="text-[#15803D]" />
+                      <span>Connect Verified Dev Account (Instant)</span>
+                    </button>
+                  )}
 
                   <div className="bg-[#F8F9FA] border border-[#ECECE8] rounded-xl p-3 text-left space-y-2 mt-2">
                     <div className="flex items-center justify-between">

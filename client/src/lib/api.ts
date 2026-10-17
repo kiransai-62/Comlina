@@ -15,6 +15,11 @@ export class ApiError extends Error {
   }
 }
 
+export interface RequestOptions extends RequestInit {
+  timeout?: number;
+  _isRetry?: boolean;
+}
+
 class ApiClient {
   private activeWorkspaceId: string | null = null;
   private isRefreshing = false;
@@ -54,7 +59,7 @@ class ApiClient {
     this.refreshSubscribers = [];
   }
 
-  async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
+  async request<T>(endpoint: string, options: RequestOptions = {}): Promise<T> {
     const token = await authService.getToken();
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
@@ -75,8 +80,9 @@ class ApiClient {
     const url = `${API_BASE_URL}/${endpoint.replace(/^\//, '')}`;
 
     const controller = new AbortController();
-    // Allow up to 10 seconds for backend operations
-    const timeoutId = setTimeout(() => controller.abort(), 10000);
+    // Allow up to 45s by default (or custom option) to accommodate external Meta Graph API round trips
+    const timeoutMs = options.timeout ?? 45000;
+    const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
 
     try {
       const response = await fetch(url, {
@@ -193,11 +199,11 @@ class ApiClient {
     }
   }
 
-  get<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  get<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     return this.request<T>(endpoint, { ...options, method: 'GET' });
   }
 
-  post<T>(endpoint: string, body?: any, options?: RequestInit): Promise<T> {
+  post<T>(endpoint: string, body?: any, options?: RequestOptions): Promise<T> {
     return this.request<T>(endpoint, {
       ...options,
       method: 'POST',
@@ -205,7 +211,7 @@ class ApiClient {
     });
   }
 
-  delete<T>(endpoint: string, options?: RequestInit): Promise<T> {
+  delete<T>(endpoint: string, options?: RequestOptions): Promise<T> {
     return this.request<T>(endpoint, { ...options, method: 'DELETE' });
   }
 }
