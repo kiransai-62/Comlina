@@ -20,8 +20,11 @@ client/tsconfig.tsbuildinfo
 # Environment & Secrets
 .env
 .env.*
+!*.example
+!**/*.example
 **/.env
 **/.env.*
+!**/.env*.example
 *.pem
 *.key
 *.db

@@ -21,6 +21,7 @@ import { instagramApi } from '@/features/instagram/api';
 import { ConnectedInstagramAccount } from '@/features/instagram/types';
 import { BrandLogo } from '@/components/BrandLogo';
 import { MovingArrowConnector } from '@/components/MovingArrowConnector';
+import { authService } from '@/lib/auth';
 
 function BookIcon({ size = 18, className = '' }: { size?: number; className?: string }) {
   return (
@@ -158,7 +159,10 @@ export default function InstagramAccountsPage() {
             {(error as any)?.message || 'Unable to retrieve connected Instagram accounts. Please verify backend server status.'}
           </p>
           <button
-            onClick={() => refetch()}
+            onClick={async () => {
+              await authService.refreshToken();
+              refetch();
+            }}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer mx-auto"
           >
             <RefreshCw size={14} />

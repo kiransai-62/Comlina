@@ -23,6 +23,7 @@ import {
   RefreshCw,
   User
 } from 'lucide-react';
+import { authService } from '@/lib/auth';
 import { conversationsApi } from '@/features/conversations/api';
 
 export default function ConversationsPage() {
@@ -148,7 +149,10 @@ export default function ConversationsPage() {
             </div>
           </div>
           <button
-            onClick={() => refetchConversations()}
+            onClick={async () => {
+              await authService.refreshToken();
+              refetchConversations();
+            }}
             className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
           >
             <RefreshCw size={13} />

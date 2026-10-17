@@ -164,6 +164,33 @@ def test_validate_automation_features_free_tier():
     assert err is not None
     assert "AI Smart Assistant is exclusive to the Pro plan" in err
 
+    # Rejection 8: Create Lead Flow (Pro feature)
+    valid, err = PlanService.validate_automation_features(ws, {
+        **basic_free,
+        "type": "COMMENT_TO_LEAD",
+    })
+    assert valid is False
+    assert err is not None
+    assert "Create Lead Flow requires a Pro plan" in err
+
+    # Rejection 9: DM Reply (Pro feature)
+    valid, err = PlanService.validate_automation_features(ws, {
+        **basic_free,
+        "type": "DM_REPLY",
+    })
+    assert valid is False
+    assert err is not None
+    assert "DM Reply Flow requires a Pro plan" in err
+
+    # Rejection 10: DM to Lead Collection (Pro feature)
+    valid, err = PlanService.validate_automation_features(ws, {
+        **basic_free,
+        "type": "DM_TO_LEAD",
+    })
+    assert valid is False
+    assert err is not None
+    assert "DM to Lead Collection requires a Pro plan" in err
+
 
 def test_validate_automation_features_premium_and_pro():
     """Ensure Premium accepts its features but rejects Pro features; Pro accepts all."""
@@ -187,14 +214,27 @@ def test_validate_automation_features_premium_and_pro():
     assert valid is True
     assert err is None
 
-    # Pro feature fails on Premium
+    # Pro features fail on Premium
     valid, err = PlanService.validate_automation_features(premium_ws, {
         **premium_config,
-        "liveCommentEnabled": True,
+        "type": "COMMENT_TO_LEAD",
     })
     assert valid is False
-    assert err is not None
-    assert "Live Comment Automation is exclusive to the Pro plan" in err
+    assert "Create Lead Flow requires a Pro plan" in err
+
+    valid, err = PlanService.validate_automation_features(premium_ws, {
+        **premium_config,
+        "type": "DM_REPLY",
+    })
+    assert valid is False
+    assert "DM Reply Flow requires a Pro plan" in err
+
+    valid, err = PlanService.validate_automation_features(premium_ws, {
+        **premium_config,
+        "type": "DM_TO_LEAD",
+    })
+    assert valid is False
+    assert "DM to Lead Collection requires a Pro plan" in err
 
     # Everything succeeds on Pro
     pro_ws = Workspace(
@@ -207,6 +247,7 @@ def test_validate_automation_features_premium_and_pro():
         "liveCommentEnabled": True,
         "aiSmartAssistantEnabled": True,
         "appointmentBookingEnabled": True,
+        "type": "COMMENT_TO_LEAD",
     }
     valid, err = PlanService.validate_automation_features(pro_ws, pro_config)
     assert valid is True

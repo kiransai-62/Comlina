@@ -25,6 +25,7 @@ import {
 import { useAutomations } from '@/features/automations/hooks';
 import { AutomationItem } from '@/features/automations/types';
 import { InstagramPhonePreview } from '@/components/automations/InstagramPhonePreview';
+import { authService } from '@/lib/auth';
 
 export default function AutomationsPage() {
   const [search, setSearch] = useState('');
@@ -228,7 +229,10 @@ export default function AutomationsPage() {
             {(error as any)?.message || 'Unable to connect to backend server. Please verify your connection.'}
           </p>
           <button
-            onClick={() => refetch()}
+            onClick={async () => {
+              await authService.refreshToken();
+              refetch();
+            }}
             className="inline-flex items-center gap-1.5 px-4 py-2 bg-red-600 hover:bg-red-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer mx-auto"
           >
             <RefreshCw size={14} />

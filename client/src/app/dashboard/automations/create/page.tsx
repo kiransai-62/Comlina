@@ -34,12 +34,15 @@ import { ValidationBar } from '@/components/automations/ValidationBar';
 import { PublishModal } from '@/components/automations/PublishModal';
 import { InstagramPhonePreview } from '@/components/automations/InstagramPhonePreview';
 import { InstagramMediaItem, SAMPLE_INSTAGRAM_POSTS } from '@/components/automations/PostSelector';
+import { UpgradeModal } from '@/components/billing/UpgradeModal';
+import { usePlan } from '@/hooks/usePlan';
 import { Eye, Sparkles, X } from 'lucide-react';
 
 export default function CreateAutomationPage() {
   const router = useRouter();
   const showToast = useUIStore((s) => s.showToast);
   const { createAutomation, publishAutomation } = useAutomations();
+  const { openUpgradeModal } = usePlan();
 
   // Active Flow View: 'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'
   const [activeFlowView, setActiveFlowView] = useState<'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'>('picker');
@@ -119,6 +122,7 @@ export default function CreateAutomationPage() {
   const handleSelectType = (opt: AutomationTypeOption) => {
     if (opt.isLocked) {
       showToast(`${opt.title} is a PRO feature. Upgrade your plan to unlock. 🔒`);
+      openUpgradeModal('PRO', opt.id);
       return;
     }
 
@@ -644,6 +648,9 @@ export default function CreateAutomationPage() {
           createdId={createdAutomationId}
           onResetForAnother={handleResetForAnother}
         />
+
+        {/* Upgrade Modal for Locked Pro Features */}
+        <UpgradeModal />
       </div>
     );
   }

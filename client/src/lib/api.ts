@@ -60,14 +60,31 @@ class ApiClient {
 
       if (!response.ok) {
         if (AUTH_ENABLED && response.status === 401 && typeof window !== 'undefined') {
-          // Only redirect if the Supabase session is definitively null
-          try {
-            const currentSession = await authService.getSession();
-            if (!currentSession) {
-              const pathname = window.location.pathname;
-              if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
-                window.location.href = '/login';
+          // If request was not already a retry, attempt an automatic seamless token refresh
+          if (!(options as any)._isRetry) {
+            try {
+              const refreshedToken = await authService.refreshToken();
+              if (refreshedToken) {
+                return await this.request<T>(endpoint, {
+                  ...options,
+                  _isRetry: true,
+                  headers: {
+                    ...((options.headers as Record<string, string>) || {}),
+                    Authorization: `Bearer ${refreshedToken}`,
+                  },
+                } as RequestInit);
               }
+            } catch {
+              // fall through to sign out
+            }
+          }
+
+          // If token refresh failed or token is genuinely invalid, clear stale state and redirect
+          try {
+            const pathname = window.location.pathname;
+            if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
+              await authService.signOut();
+              return null as unknown as T;
             }
           } catch {
             // ignore

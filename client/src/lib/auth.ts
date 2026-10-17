@@ -53,9 +53,20 @@ class AuthService {
     if (isSupabaseConfigured) {
       try {
         const { data: { session }, error } = await supabase.auth.getSession();
-        if (!error && session) return session;
-      } catch {
-        // fall through to backend token
+        if (!error && session) {
+          const now = Math.floor(Date.now() / 1000);
+          // If token has expired or is expiring in less than 60 seconds, refresh it proactively
+          if (session.expires_at && session.expires_at - now < 60) {
+            console.info('[Auth] Supabase token expired or expiring soon, refreshing session...');
+            const { data: refreshed, error: refreshErr } = await supabase.auth.refreshSession();
+            if (!refreshErr && refreshed.session) {
+              return refreshed.session;
+            }
+          }
+          return session;
+        }
+      } catch (err) {
+        console.warn('[Auth] Error getting/refreshing Supabase session:', err);
       }
     }
 
@@ -79,6 +90,25 @@ class AuthService {
 
     // Backend token fallback
     return this._backendToken;
+  }
+
+  async refreshToken(): Promise<string | null> {
+    if (typeof window === 'undefined') return null;
+
+    if (isSupabaseConfigured) {
+      try {
+        console.info('[Auth] Manually triggering Supabase session refresh...');
+        const { data, error } = await supabase.auth.refreshSession();
+        if (!error && data.session?.access_token) {
+          console.info('[Auth] Session successfully refreshed.');
+          return data.session.access_token;
+        }
+      } catch (err) {
+        console.warn('[Auth] refreshSession error:', err);
+      }
+    }
+
+    return null;
   }
 
   async getUser(): Promise<AuthUser | null> {

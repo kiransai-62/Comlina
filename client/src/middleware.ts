@@ -95,7 +95,7 @@ const CSP_POLICY = [
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
   "img-src 'self' data: blob: https://images.unsplash.com https://*.facebook.com https://*.instagram.com https://*.cdninstagram.com https://*.fbcdn.net https://api.dicebear.com https://*.googleusercontent.com",
   "font-src 'self' https://fonts.gstatic.com data:",
-  "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com",
+  "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai https://*.onrender.com wss://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",

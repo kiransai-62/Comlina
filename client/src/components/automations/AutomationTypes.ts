@@ -146,10 +146,12 @@ export const AUTOMATION_TYPE_OPTIONS: AutomationTypeOption[] = [
   },
   {
     id: 'comment_to_lead',
-    title: 'Comment to Lead Collection',
+    title: 'Create Lead Flow',
     description: 'Capture contact details and emails directly from post comments.',
     category: 'comments',
+    badge: 'PRO',
     iconName: 'Users',
+    isLocked: true,
   },
 
   // Messages
@@ -158,14 +160,18 @@ export const AUTOMATION_TYPE_OPTIONS: AutomationTypeOption[] = [
     title: 'DM Reply',
     description: 'Auto-reply when someone sends a specific keyword in direct messages.',
     category: 'messages',
+    badge: 'PRO',
     iconName: 'Send',
+    isLocked: true,
   },
   {
     id: 'dm_to_lead',
     title: 'DM to Lead Collection',
     description: 'Start an automated lead qualification sequence inside direct messages.',
     category: 'messages',
+    badge: 'PRO',
     iconName: 'Users',
+    isLocked: true,
   },
 
   // Stories

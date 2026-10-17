@@ -30,6 +30,9 @@ FEATURE_LIVE_COMMENT = "live_comment"
 FEATURE_AI_SMART_ASSISTANT = "ai_smart_assistant"
 FEATURE_APPOINTMENT_BOOKING = "appointment_booking"
 FEATURE_ADVANCED_WORKFLOWS = "advanced_workflows"
+FEATURE_CREATE_LEAD_FLOW = "create_lead_flow"
+FEATURE_DM_REPLY = "dm_reply"
+FEATURE_DM_TO_LEAD = "dm_to_lead"
 
 
 # Centralized Quotas & Pricing
@@ -58,6 +61,9 @@ PLAN_CONFIG: Dict[PlanTier, Dict[str, Any]] = {
             "ai_smart_assistant": False,      # Locked: PRO
             "appointment_booking": False,     # Locked: PRO
             "advanced_workflows": False,      # Locked: PRO
+            "create_lead_flow": False,        # Locked: PRO
+            "dm_reply": False,                # Locked: PRO
+            "dm_to_lead": False,              # Locked: PRO
         },
         "description": "Essential Comment-to-DM automation for creators getting started.",
     },
@@ -85,6 +91,9 @@ PLAN_CONFIG: Dict[PlanTier, Dict[str, Any]] = {
             "ai_smart_assistant": False,      # Locked: PRO
             "appointment_booking": False,     # Locked: PRO
             "advanced_workflows": False,      # Locked: PRO
+            "create_lead_flow": False,        # Locked: PRO
+            "dm_reply": False,                # Locked: PRO
+            "dm_to_lead": False,              # Locked: PRO
         },
         "description": "Advanced conversion tools: Ask to Follow, Teaser replies, and multi-step follow-ups.",
     },
@@ -112,6 +121,9 @@ PLAN_CONFIG: Dict[PlanTier, Dict[str, Any]] = {
             "ai_smart_assistant": True,
             "appointment_booking": True,
             "advanced_workflows": True,
+            "create_lead_flow": True,
+            "dm_reply": True,
+            "dm_to_lead": True,
         },
         "description": "Power workflows: Live Comment automation, AI Smart Assistant, and Appointment Booking.",
     },

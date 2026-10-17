@@ -1,0 +1,114 @@
+# ==============================================================================
+# Comlina — Production Render Blueprint Specification
+# Defines multi-service architecture: Next.js frontend, FastAPI ASGI backend,
+# Arq background worker, managed Redis, and Supabase integration.
+# ==============================================================================
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Comlina Frontend (Next.js Standalone / Node)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: comlina-web
+    env: node
+    plan: starter
+    region: oregon
+    rootDir: client
+    buildCommand: npm ci && npm run build
+    startCommand: npm run start
+    healthCheckPath: /
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: NEXT_TELEMETRY_DISABLED
+        value: "1"
+      - key: NEXT_PUBLIC_API_URL
+        value: https://comlina-api.onrender.com/api
+      - key: NEXT_PUBLIC_SUPABASE_URL
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_ANON_KEY
+        sync: false
+      - key: NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY
+        sync: false
+
+  # ----------------------------------------------------------------------------
+  # 2. Comlina Backend API (FastAPI / Gunicorn + Uvicorn)
+  # ----------------------------------------------------------------------------
+  - type: web
+    name: comlina-api
+    env: python
+    plan: starter
+    region: oregon
+    rootDir: server
+    buildCommand: pip install -r requirements.txt
+    preDeployCommand: python ../scripts/migrate.py
+    startCommand: gunicorn -c gunicorn.conf.py app.main:app
+    healthCheckPath: /health
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: WEB_CONCURRENCY
+        value: "4"
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: comlina-redis
+          property: connectionString
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: META_APP_ID
+        sync: false
+      - key: META_APP_SECRET
+        sync: false
+      - key: META_WEBHOOK_VERIFY_TOKEN
+        sync: false
+      - key: META_REDIRECT_URI
+        value: https://comlina.onrender.com/connect/instagram
+      - key: CORS_ORIGINS
+        value: https://comlina.onrender.com,https://app.comlina.ai,https://comlina.ai
+      - key: RUN_MIGRATIONS
+        value: "false"
+
+  # ----------------------------------------------------------------------------
+  # 3. Comlina Background Worker (Arq Automation Worker)
+  # ----------------------------------------------------------------------------
+  - type: worker
+    name: comlina-worker
+    env: python
+    plan: starter
+    region: oregon
+    rootDir: worker
+    buildCommand: pip install -r requirements.txt
+    startCommand: arq app.main.WorkerSettings
+    autoDeploy: true
+    envVars:
+      - key: ENVIRONMENT
+        value: production
+      - key: DATABASE_URL
+        sync: false
+      - key: REDIS_URL
+        fromService:
+          type: redis
+          name: comlina-redis
+          property: connectionString
+      - key: TOKEN_ENCRYPTION_KEY
+        sync: false
+      - key: META_GRAPH_API_VERSION
+        value: v21.0
+
+  # ----------------------------------------------------------------------------
+  # 4. Comlina Key-Value Store (Render Redis)
+  # ----------------------------------------------------------------------------
+  - type: redis
+    name: comlina-redis
+    plan: starter
+    region: oregon
+    maxmemoryPolicy: volatile-lru
+    ipAllowList: [] # Restricted to Render private networking

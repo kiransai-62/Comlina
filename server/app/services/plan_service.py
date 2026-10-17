@@ -81,6 +81,19 @@ class PlanService:
         if booking and not has_feature(tier, "appointment_booking"):
             return False, "Appointment Booking is exclusive to the Pro plan (₹399/mo). Please upgrade to unlock."
 
+        # 10. Create Lead Flow (Comment to Lead) -> PRO
+        flow_type = str(flow_definition.get("type", "")).upper()
+        if flow_type in ("COMMENT_TO_LEAD", "LEAD_FLOW") and not has_feature(tier, "create_lead_flow"):
+            return False, "Create Lead Flow requires a Pro plan (₹399/mo). Please upgrade to unlock."
+
+        # 11. DM Reply -> PRO
+        if flow_type == "DM_REPLY" and not has_feature(tier, "dm_reply"):
+            return False, "DM Reply Flow requires a Pro plan (₹399/mo). Please upgrade to unlock."
+
+        # 12. DM to Lead Collection -> PRO
+        if flow_type == "DM_TO_LEAD" and not has_feature(tier, "dm_to_lead"):
+            return False, "DM to Lead Collection requires a Pro plan (₹399/mo). Please upgrade to unlock."
+
         return True, None
 
     @staticmethod

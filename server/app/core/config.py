@@ -54,13 +54,24 @@ class Settings(BaseSettings):
     INSTAGRAM_ACCESS_TOKEN: str = os.getenv("INSTAGRAM_ACCESS_TOKEN", "")
 
     # Supabase & Authentication
-    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
-    SUPABASE_ANON_KEY: str = os.getenv("SUPABASE_ANON_KEY", "") or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+    SUPABASE_URL: str = os.getenv("SUPABASE_URL", "https://vrfwgoigtmixkkunvrnw.supabase.co")
+    SUPABASE_ANON_KEY: str = (
+        os.getenv("SUPABASE_ANON_KEY", "")
+        or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
+        or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyZndnb2lndG1peGtrdW52cm53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5ODQ0MTIsImV4cCI6MjEwNTU2MDQxMn0.fDzpZvoeziDZW7i2qvTcAs5x1fWx9uQxhCeHBVcpgEw"
+    )
     SUPABASE_PUBLISHABLE_KEY: str = os.getenv("SUPABASE_PUBLISHABLE_KEY", "") or os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "")
-    SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "") or (f"{os.getenv('SUPABASE_URL', '').rstrip('/')}/auth/v1/.well-known/jwks.json" if os.getenv("SUPABASE_URL") else "")
+    SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "") or (f"{os.getenv('SUPABASE_URL', 'https://vrfwgoigtmixkkunvrnw.supabase.co').rstrip('/')}/auth/v1/.well-known/jwks.json")
     SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
-    SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "dev-jwt-secret-comlina-2026")
-    BACKEND_JWT_SECRET: str = os.getenv("BACKEND_JWT_SECRET") or os.getenv("SUPABASE_JWT_SECRET") or "dev-jwt-secret-comlina-2026"
+    SUPABASE_JWT_SECRET: str = os.getenv(
+        "SUPABASE_JWT_SECRET",
+        "gZcO366odD6VzDrwzP07A3z8ND91jJCspWbGt0B+jgLfVq6WKU4uVvTD1TKxAah25MKz0iJZB4xhOE6loX4PnQ=="
+    )
+    BACKEND_JWT_SECRET: str = (
+        os.getenv("BACKEND_JWT_SECRET")
+        or os.getenv("SUPABASE_JWT_SECRET")
+        or "gZcO366odD6VzDrwzP07A3z8ND91jJCspWbGt0B+jgLfVq6WKU4uVvTD1TKxAah25MKz0iJZB4xhOE6loX4PnQ=="
+    )
 
     # Database & Redis Queue
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/comlina")

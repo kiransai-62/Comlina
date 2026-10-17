@@ -215,7 +215,8 @@ export default function DashboardOverviewPage() {
             </div>
           </div>
           <button
-            onClick={() => {
+            onClick={async () => {
+              await authService.refreshToken();
               refetchAccounts();
               refetchSummary();
               refetchAutomations();
