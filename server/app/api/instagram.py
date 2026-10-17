@@ -6,6 +6,8 @@ import logging
 import secrets
 import hashlib
 import hmac
+import time
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
@@ -13,8 +15,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_workspace, require_workspace_owner
-from app.models import Workspace, InstagramAccount
+from app.api.deps import get_current_workspace, require_workspace_owner, get_current_user
+from app.models import Workspace, InstagramAccount, Automation, User
 from app.schemas import InstagramAccountOut, ConnectAccountRequest, InstagramMediaPage
 from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
 from app.integrations.instagram.client import MetaGraphClient
@@ -92,9 +94,37 @@ async def list_instagram_media(
     raw_items = raw.get("data", []) if isinstance(raw, dict) else []
     return [_normalize_media_item(m) for m in raw_items]
 
-def generate_oauth_state(workspace_id: uuid.UUID) -> str:
+def _is_allowed_redirect_uri(redirect_uri: Optional[str]) -> bool:
+    if not redirect_uri:
+        return True
+    try:
+        parsed = urlparse(redirect_uri)
+        if not parsed.scheme or not parsed.netloc:
+            return False
+        host = (parsed.hostname or "").lower()
+        allowed_hosts = {
+            "localhost",
+            "127.0.0.1",
+            "0.0.0.0",
+            "app.comlina.ai",
+            "comlina.ai",
+            "www.comlina.ai",
+            "comlina.com",
+            "www.comlina.com",
+        }
+        if settings.META_REDIRECT_URI:
+            meta_parsed = urlparse(settings.META_REDIRECT_URI)
+            if meta_parsed.hostname:
+                allowed_hosts.add(meta_parsed.hostname.lower())
+        return host in allowed_hosts
+    except Exception:
+        return False
+
+def generate_oauth_state(workspace_id: uuid.UUID, user_id: Optional[uuid.UUID] = None) -> str:
+    timestamp = int(time.time())
     nonce = secrets.token_hex(16)
-    state_payload = f"{workspace_id}:{nonce}"
+    uid_str = str(user_id) if user_id else "any"
+    state_payload = f"{workspace_id}:{uid_str}:{timestamp}:{nonce}"
     sig = hmac.new(
         key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
         msg=state_payload.encode("utf-8"),
@@ -102,39 +132,71 @@ def generate_oauth_state(workspace_id: uuid.UUID) -> str:
     ).hexdigest()[:16]
     return f"{state_payload}:{sig}"
 
-def verify_oauth_state(state: str, workspace_id: uuid.UUID) -> bool:
+def verify_oauth_state(
+    state: str,
+    workspace_id: uuid.UUID,
+    user_id: Optional[uuid.UUID] = None,
+    max_age_seconds: int = 900
+) -> bool:
     try:
         parts = state.split(":")
-        if len(parts) != 3:
-            return False
-        ws_id_str, nonce, provided_sig = parts
-        if ws_id_str != str(workspace_id):
-            return False
-        state_payload = f"{ws_id_str}:{nonce}"
-        expected_sig = hmac.new(
-            key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
-            msg=state_payload.encode("utf-8"),
-            digestmod=hashlib.sha256
-        ).hexdigest()[:16]
-        return hmac.compare_digest(provided_sig, expected_sig)
+        # 5-part state: ws_id:user_id:timestamp:nonce:sig
+        if len(parts) == 5:
+            ws_id_str, u_id_str, ts_str, nonce, provided_sig = parts
+            if ws_id_str != str(workspace_id):
+                return False
+            if user_id and u_id_str != "any" and u_id_str != str(user_id):
+                return False
+            ts = int(ts_str)
+            now = int(time.time())
+            if now - ts > max_age_seconds or ts > now + 300:
+                return False
+            state_payload = f"{ws_id_str}:{u_id_str}:{ts_str}:{nonce}"
+            expected_sig = hmac.new(
+                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
+                msg=state_payload.encode("utf-8"),
+                digestmod=hashlib.sha256
+            ).hexdigest()[:16]
+            return hmac.compare_digest(provided_sig, expected_sig)
+        # Legacy 3-part state: ws_id:nonce:sig (backwards compatibility)
+        elif len(parts) == 3:
+            ws_id_str, nonce, provided_sig = parts
+            if ws_id_str != str(workspace_id):
+                return False
+            state_payload = f"{ws_id_str}:{nonce}"
+            expected_sig = hmac.new(
+                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
+                msg=state_payload.encode("utf-8"),
+                digestmod=hashlib.sha256
+            ).hexdigest()[:16]
+            return hmac.compare_digest(provided_sig, expected_sig)
+        return False
     except Exception:
         return False
 
 @router.get("/oauth/connect-url")
 async def get_connect_url(
     redirect_uri: Optional[str] = None,
+    user: User = Depends(get_current_user),
     workspace: Workspace = Depends(require_workspace_owner)
 ):
     """
-    Returns Meta OAuth dialog URL with CSRF state containing the cryptographically signed workspace id.
+    Returns Meta OAuth dialog URL with CSRF state containing cryptographically signed,
+    time-limited (15m) workspace and user binding. Rejects unauthorized redirect destinations.
     """
-    state = generate_oauth_state(workspace.id)
+    if redirect_uri and not _is_allowed_redirect_uri(redirect_uri):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri destination."
+        )
+    state = generate_oauth_state(workspace.id, user.id)
     url = MetaOAuth.get_authorization_url(state=state, redirect_uri=redirect_uri)
     return {"authorization_url": url, "state": state}
 
 @router.post("/oauth/callback", response_model=InstagramAccountOut)
 async def handle_oauth_callback(
     data: ConnectAccountRequest,
+    user: User = Depends(get_current_user),
     workspace: Workspace = Depends(require_workspace_owner),
     db: AsyncSession = Depends(get_db)
 ):
@@ -143,8 +205,8 @@ async def handle_oauth_callback(
     queries Meta Graph API for connected Instagram Business Account details,
     and upserts InstagramAccount record with encrypted token and expiration date.
     """
-    # 1. Verify CSRF OAuth state
-    if not data.state or not verify_oauth_state(data.state, workspace.id):
+    # 1. Verify CSRF OAuth state (bound to workspace and user with 15m expiration)
+    if not data.state or not verify_oauth_state(data.state, workspace.id, user.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or missing OAuth state parameter (CSRF protection failed)."
@@ -320,5 +382,16 @@ async def disconnect_instagram_account(
         raise HTTPException(status_code=404, detail="Instagram account not found")
 
     account.is_active = False
+    account.access_token_encrypted = ""
+
+    # Pause any active automations associated with this disconnected account
+    stmt_pause = select(Automation).where(
+        Automation.instagram_account_id == account.id,
+        Automation.status == "ACTIVE"
+    )
+    active_autos = (await db.execute(stmt_pause)).scalars().all()
+    for auto in active_autos:
+        auto.status = "PAUSED"
+
     await db.commit()
     return None

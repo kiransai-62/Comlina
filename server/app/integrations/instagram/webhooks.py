@@ -38,6 +38,11 @@ class InstagramWebhookParser:
             # 2. Feed / Comments
             for change in entry.get("changes", []):
                 val = change.get("value", {})
+                sender_id = str(val.get("from", {}).get("id", ""))
+                # Filter out self-comments from the creator/business account to prevent recursive trigger loops
+                if sender_id and business_id and sender_id == business_id:
+                    continue
+
                 provider_id = val.get("id") or f"chg_{entry.get('time')}_{val.get('item')}"
                 events.append({
                     "provider_event_id": provider_id,

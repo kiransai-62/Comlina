@@ -183,10 +183,12 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     instagram_client=meta_client,
                     db_session=session
                 )
-                execution_summary["automations_matched"] += 1
+                is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
+                if is_matched:
+                    execution_summary["automations_matched"] += 1
                 execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
 
-                if res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED"):
+                if is_matched:
                     action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
                     for act_res in action_results:

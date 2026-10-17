@@ -6,7 +6,7 @@ from app.core.config import settings
 
 logger = logging.getLogger("meta_oauth")
 
-IG_AUTHORIZE_URL = "https://api.instagram.com/oauth/authorize"
+IG_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
 IG_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 IG_GRAPH = "https://graph.instagram.com"
 IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish"

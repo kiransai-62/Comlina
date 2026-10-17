@@ -243,7 +243,10 @@ async def receive_meta_webhook(
         workspace_id = None
         instagram_account_id = None
         if business_ig_id:
-            stmt_acc = select(InstagramAccount).where(InstagramAccount.ig_user_id == business_ig_id)
+            stmt_acc = select(InstagramAccount).where(
+                InstagramAccount.ig_user_id == business_ig_id,
+                InstagramAccount.is_active == True
+            )
             res_acc = await db.execute(stmt_acc)
             acc = res_acc.scalar_one_or_none()
             if acc:

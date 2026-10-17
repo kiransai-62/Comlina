@@ -3,10 +3,11 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
+from app.core.plans import get_plan_config
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.models import (
@@ -16,7 +17,9 @@ from app.models import (
     Conversation,
     Message,
     WebhookEvent,
-    AnalyticsEvent
+    AnalyticsEvent,
+    Workspace,
+    PostUsage
 )
 
 logger = logging.getLogger("process_comment")
@@ -123,6 +126,55 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 return execution_summary
 
+            # 2.5 Enforce Workspace Plan Quota & Limits
+            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id)
+            res_ws = await session.execute(stmt_ws)
+            workspace = res_ws.scalar_one_or_none()
+            tier = (workspace.plan_tier or "FREE").upper() if workspace else "FREE"
+            plan_cfg = get_plan_config(tier)
+
+            media_id = str(event_data.get("post_id") or event_data.get("media_id") or "").strip()
+            post_usage: Optional[PostUsage] = None
+
+            if media_id and media_id.lower() not in ("all", "none", ""):
+                stmt_post = select(PostUsage).where(
+                    PostUsage.workspace_id == account.workspace_id,
+                    PostUsage.media_id == media_id
+                )
+                res_post = await session.execute(stmt_post)
+                post_usage = res_post.scalars().first()
+
+                max_posts = plan_cfg.get("max_posts_quota", 10)
+                if not post_usage and max_posts != -1:
+                    cnt_stmt = select(func.count(PostUsage.id)).where(PostUsage.workspace_id == account.workspace_id)
+                    cnt_res = await session.execute(cnt_stmt)
+                    current_post_count = cnt_res.scalar() or 0
+                    if current_post_count >= max_posts:
+                        logger.warning(
+                            f"Post quota limit reached ({current_post_count}/{max_posts}) for workspace {account.workspace_id}. "
+                            f"Ignoring comment for media {media_id}."
+                        )
+                        execution_summary["status"] = "QUOTA_EXCEEDED"
+                        execution_summary["reason"] = f"POST_QUOTA_EXCEEDED: max {max_posts} posts allowed on {plan_cfg.get('name', 'Free')} plan"
+                        await _update_webhook_event(
+                            session, event_id, event_data.get("provider_event_id"), "IGNORED", execution_summary["reason"]
+                        )
+                        return execution_summary
+
+                # Check max DMs per post
+                max_dms = plan_cfg.get("max_dms_per_post", 99)
+                current_dms = post_usage.dms_delivered_count if post_usage else 0
+                if current_dms >= max_dms:
+                    logger.warning(
+                        f"DM quota per post reached ({current_dms}/{max_dms}) for post {media_id}. Ignoring comment."
+                    )
+                    execution_summary["status"] = "QUOTA_EXCEEDED"
+                    execution_summary["reason"] = f"DM_QUOTA_EXCEEDED: max {max_dms} DMs per post allowed on {plan_cfg.get('name', 'Free')} plan"
+                    await _update_webhook_event(
+                        session, event_id, event_data.get("provider_event_id"), "IGNORED", execution_summary["reason"]
+                    )
+                    return execution_summary
+
             for auto in automations:
                 res = await FlowEngine.run_flow(
                     auto.flow_definition,
@@ -130,10 +182,12 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     instagram_client=meta_client,
                     db_session=session
                 )
-                execution_summary["automations_matched"] += 1
+                is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
+                if is_matched:
+                    execution_summary["automations_matched"] += 1
                 execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
 
-                if res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED"):
+                if is_matched:
                     action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
                     for act_res in action_results:
@@ -142,6 +196,21 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                                 auto.stats_comments = (auto.stats_comments or 0) + 1
                             elif act_res.get("action") == "PRIVATE_DM":
                                 auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
+                                # Atomically track verified DM delivery on PostUsage
+                                if media_id and media_id.lower() not in ("all", "none", ""):
+                                    if not post_usage:
+                                        post_usage = PostUsage(
+                                            id=uuid.uuid4(),
+                                            workspace_id=account.workspace_id,
+                                            instagram_account_id=account.id,
+                                            media_id=media_id,
+                                            dms_delivered_count=1,
+                                            last_delivered_at=datetime.now(timezone.utc)
+                                        )
+                                        session.add(post_usage)
+                                    else:
+                                        post_usage.dms_delivered_count = (post_usage.dms_delivered_count or 0) + 1
+                                        post_usage.last_delivered_at = datetime.now(timezone.utc)
 
             # 3. Contact Auto-Creation / Upsert
             contact = None
