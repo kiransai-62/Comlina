@@ -80,22 +80,31 @@ class Settings(BaseSettings):
     RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "dev_webhook_secret_comlina_2026")
 
     # CORS
-    CORS_ORIGINS: List[str] = [
+    CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost:3000",
         "http://localhost:5173",
         "https://app.comlina.ai",
-        "https://comlina.ai"
+        "https://comlina.ai",
+        "https://comlina.onrender.com"
     ]
 
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
-        if isinstance(v, str) and not v.startswith("["):
+        if isinstance(v, str):
+            if v.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(v)
+                    if isinstance(parsed, list):
+                        return [str(i).strip() for i in parsed if str(i).strip()]
+                except Exception:
+                    pass
             origins = [i.strip() for i in v.split(",") if i.strip()]
-            return origins if origins else ["http://localhost:3000", "https://app.comlina.ai"]
+            return origins if origins else ["http://localhost:3000", "https://app.comlina.ai", "https://comlina.onrender.com"]
         elif isinstance(v, list):
             return [str(i).strip() for i in v if str(i).strip()]
-        return ["http://localhost:3000", "https://app.comlina.ai"]
+        return ["http://localhost:3000", "https://app.comlina.ai", "https://comlina.onrender.com"]
 
     model_config = SettingsConfigDict(
         env_file=".env",
