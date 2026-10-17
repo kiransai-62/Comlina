@@ -35,8 +35,8 @@ const apiUrl = mergedEnv.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
 
 /** @type {import('next').NextConfig} */
 const nextConfig = {
-  // Use default .next directory on Vercel to support automatic zero-config edge deployment
-  distDir: process.env.VERCEL ? undefined : (process.env.NEXT_DIST_DIR || '.next_app'),
+  // Standard default .next build directory
+  distDir: process.env.NEXT_DIST_DIR || undefined,
   output: process.env.DOCKER_BUILD === '1' || process.env.OUTPUT_STANDALONE === '1' ? 'standalone' : undefined,
   reactStrictMode: false,
   env: {
