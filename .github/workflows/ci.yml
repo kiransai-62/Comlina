@@ -51,17 +51,18 @@ jobs:
           cache: 'pip'
 
       - name: Install Dependencies
-        run: pip install -r server/requirements.txt
+        run: |
+          pip install -r server/requirements.txt
+          pip install -r worker/requirements.txt
 
       - name: Run Server Tests
         env:
           ENVIRONMENT: development
-          TOKEN_ENCRYPTION_KEY: fedcba9876543210fedcba9876543210
+          TOKEN_ENCRYPTION_KEY: -YSQRVH6AHTJ1PMLC9Y53jfzV1Ytu4EUWZ7c4qJDbco=
           SUPABASE_URL: https://placeholder.supabase.co
           SUPABASE_JWT_SECRET: placeholder_jwt_secret
-        run: |
-          cd server
-          python -m pytest tests/ -v
+          PYTHONPATH: .:server:worker
+        run: python -m pytest server/tests/ -v
 
   worker-test:
     name: ARQ Worker Tests
@@ -81,7 +82,6 @@ jobs:
 
       - name: Run Worker Tests
         env:
-          TOKEN_ENCRYPTION_KEY: fedcba9876543210fedcba9876543210
-        run: |
-          cd worker
-          python -m pytest tests/ -v
+          TOKEN_ENCRYPTION_KEY: -YSQRVH6AHTJ1PMLC9Y53jfzV1Ytu4EUWZ7c4qJDbco=
+          PYTHONPATH: .:server:worker
+        run: python -m pytest worker/tests/ -v
