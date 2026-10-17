@@ -1,0 +1,149 @@
+version: '3.8'
+
+# ==============================================================================
+# Comlina Production Docker Compose Stack
+# Multi-worker ASGI backend, standalone Next.js frontend, Arq background worker,
+# TLS 1.3 Nginx reverse proxy with Certbot SSL auto-renewal, and Redis.
+# ==============================================================================
+
+services:
+  # ----------------------------------------------------------------------------
+  # 1. Reverse Proxy & SSL Termination (Nginx)
+  # ----------------------------------------------------------------------------
+  nginx:
+    build:
+      context: .
+      dockerfile: infra/docker/nginx.Dockerfile
+    container_name: comlina-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - certs_data:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+      - nginx_logs:/var/log/nginx
+    depends_on:
+      - server
+      - client
+    restart: always
+    networks:
+      - frontend_net
+
+  # ----------------------------------------------------------------------------
+  # 2. Automated SSL Certificate Renewal (Certbot)
+  # ----------------------------------------------------------------------------
+  certbot:
+    image: certbot/certbot:v2.8.0
+    container_name: comlina-certbot
+    volumes:
+      - certs_data:/etc/letsencrypt
+      - certbot_www:/var/www/certbot
+    entrypoint: "/bin/sh -c 'trap exit TERM; while :; do certbot renew --webroot -w /var/www/certbot --quiet; sleep 12h & wait $${!}; done;'"
+    restart: always
+    networks:
+      - frontend_net
+
+  # ----------------------------------------------------------------------------
+  # 3. Next.js Frontend (Standalone Optimized Container)
+  # ----------------------------------------------------------------------------
+  client:
+    build:
+      context: ./client
+      dockerfile: ../infra/docker/client.Dockerfile
+    container_name: comlina-client
+    environment:
+      - NODE_ENV=production
+      - NEXT_PUBLIC_API_URL=${NEXT_PUBLIC_API_URL:-https://api.comlina.ai/api}
+      - NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL:-}
+      - NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY:-}
+    restart: unless-stopped
+    expose:
+      - "3000"
+    networks:
+      - frontend_net
+
+  # ----------------------------------------------------------------------------
+  # 4. FastAPI ASGI Server (Gunicorn with Multiple Uvicorn Workers)
+  # ----------------------------------------------------------------------------
+  server:
+    build:
+      context: ./server
+      dockerfile: ../infra/docker/server.Dockerfile
+    container_name: comlina-server
+    environment:
+      - ENVIRONMENT=production
+      - WEB_CONCURRENCY=${WEB_CONCURRENCY:-4}
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_JWT_SECRET=${SUPABASE_JWT_SECRET}
+      - BACKEND_JWT_SECRET=${BACKEND_JWT_SECRET:-${SUPABASE_JWT_SECRET}}
+      - META_APP_ID=${META_APP_ID}
+      - META_APP_SECRET=${META_APP_SECRET}
+      - META_REDIRECT_URI=${META_REDIRECT_URI:-https://app.comlina.ai/connect/instagram}
+      - META_WEBHOOK_VERIFY_TOKEN=${META_WEBHOOK_VERIFY_TOKEN}
+      - META_GRAPH_API_VERSION=${META_GRAPH_API_VERSION:-v21.0}
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://app.comlina.ai,https://comlina.ai}
+      - RUN_MIGRATIONS=${RUN_MIGRATIONS:-true}
+    restart: unless-stopped
+    expose:
+      - "8000"
+    networks:
+      - frontend_net
+      - backend_net
+
+  # ----------------------------------------------------------------------------
+  # 5. Background Automation Worker (Arq)
+  # ----------------------------------------------------------------------------
+  worker:
+    build:
+      context: ./worker
+      dockerfile: ../infra/docker/worker.Dockerfile
+    container_name: comlina-worker
+    environment:
+      - ENVIRONMENT=production
+      - DATABASE_URL=${DATABASE_URL}
+      - REDIS_URL=${REDIS_URL}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - META_GRAPH_API_VERSION=${META_GRAPH_API_VERSION:-v21.0}
+    restart: unless-stopped
+    networks:
+      - backend_net
+
+  # ----------------------------------------------------------------------------
+  # 6. Redis Queue & Cache (Optional if using Cloud Redis like Upstash / AWS ElastiCache)
+  # ----------------------------------------------------------------------------
+  redis:
+    image: redis:7-alpine
+    container_name: comlina-redis
+    command: >
+      redis-server
+      --save 60 1
+      --maxmemory 512mb
+      --maxmemory-policy volatile-lru
+      --requirepass ${REDIS_PASSWORD:-comlina_redis_secret}
+    volumes:
+      - redis_data:/data
+    expose:
+      - "6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-comlina_redis_secret}", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - backend_net
+
+networks:
+  frontend_net:
+    driver: bridge
+  backend_net:
+    driver: bridge
+
+volumes:
+  certs_data:
+  certbot_www:
+  nginx_logs:
+  redis_data:

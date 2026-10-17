@@ -1,0 +1,136 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  box-sizing: border-box;
+  padding-top: env(safe-area-inset-top, 0px);
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+  --bg-app: #FAFAF8;
+  --bg-card: #FFFFFF;
+  --bg-hover: #F4F4F1;
+  --bg-subtle: #F7F7F5;
+  --border-subtle: #ECECE8;
+  --border-medium: #E0E0DA;
+  --border-strong: #C4C4BC;
+  --text-heading: #111110;
+  --text-main: #333330;
+  --text-secondary: #70706B;
+  --text-muted: #9E9E96;
+  --forest-green: #004020;
+  --primary-green: #15803D;
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 16px;
+}
+
+*, *::before, *::after {
+  box-sizing: inherit;
+}
+
+html {
+  scroll-padding-top: env(safe-area-inset-top, 0px);
+}
+
+/* iOS auto-zooms any input under 16px on focus — this blocks that on the
+   auth forms without forcing a larger size on desktop via the sm: override
+   inside each field component. */
+input {
+  font-size: 16px;
+}
+
+@media (min-width: 640px) {
+  input {
+    font-size: 0.875rem;
+  }
+}
+
+body {
+  background-color: var(--bg-app);
+  color: var(--text-main);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  margin: 0;
+  padding: 0;
+  -webkit-font-smoothing: antialiased;
+}
+
+.btn-dark-green {
+  background-color: var(--forest-green);
+  color: #FFFFFF;
+  border: 1px solid rgba(0, 0, 0, 0.1);
+  transition: all 0.15s ease;
+}
+.btn-dark-green:hover {
+  background-color: #0B4628;
+}
+
+.btn-outline {
+  background-color: #FFFFFF;
+  color: var(--text-heading);
+  border: 1px solid var(--border-medium);
+  transition: all 0.15s ease;
+}
+.btn-outline:hover {
+  background-color: var(--bg-hover);
+}
+
+.ui-card {
+  background-color: var(--bg-card);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-md);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.02);
+}
+
+/* Animated Connector Arrow Effect (Instagram -> Comlina) */
+@keyframes arrowGlide {
+  0%, 100% {
+    transform: translateX(0);
+    opacity: 0.75;
+  }
+  50% {
+    transform: translateX(5px);
+    opacity: 1;
+    color: #15803D;
+  }
+}
+
+@keyframes dashFlow {
+  0% {
+    stroke-dashoffset: 14;
+  }
+  100% {
+    stroke-dashoffset: 0;
+  }
+}
+
+@keyframes pulseTravel {
+  0% {
+    transform: translateX(0);
+    opacity: 0;
+  }
+  20% {
+    opacity: 1;
+  }
+  80% {
+    opacity: 1;
+  }
+  100% {
+    transform: translateX(32px);
+    opacity: 0;
+  }
+}
+
+.animate-arrow-glide {
+  animation: arrowGlide 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform;
+}
+
+.animate-dash-flow {
+  animation: dashFlow 1.2s linear infinite;
+}
+
+.animate-pulse-travel {
+  animation: pulseTravel 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  will-change: transform, opacity;
+}
+

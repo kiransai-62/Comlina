@@ -1,0 +1,30 @@
+{
+  "include": [
+    "server",
+    "worker",
+    "scripts"
+  ],
+  "extraPaths": [
+    "server",
+    "worker",
+    "./server",
+    "./worker"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "scripts",
+      "extraPaths": ["../server", "server", "./server"]
+    },
+    {
+      "root": "server",
+      "extraPaths": ["server", "."]
+    },
+    {
+      "root": "worker",
+      "extraPaths": ["worker", "."]
+    }
+  ],
+  "pythonVersion": "3.14",
+  "reportMissingImports": "none",
+  "reportMissingModuleSource": "none"
+}

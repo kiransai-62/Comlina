@@ -1,0 +1,40 @@
+{
+  "name": "comlina-monorepo",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Comlina — Instagram conversations, automated. Production SaaS Monorepo.",
+  "scripts": {
+    "dev": "node scripts/check-deps.js && concurrently -n client,server -c cyan,green \"npm run dev:client\" \"npm run dev:server\"",
+    "dev:client": "npm --prefix client run dev",
+    "dev:server": "node scripts/check-deps.js && node scripts/start-server.js",
+    "dev:worker": "cd worker && arq app.main.WorkerSettings",
+    "build": "npm --prefix client run build",
+    "start": "npm --prefix client run start",
+    "migrate": "node scripts/run-python.js scripts/migrate.py",
+    "test:server": "node scripts/run-python.js -m pytest server/tests",
+    "test:worker": "node scripts/run-python.js -m pytest worker/tests",
+    "test": "npm run test:server && npm run test:worker",
+    "docker:up": "docker-compose up --build",
+    "docker:down": "docker-compose down",
+    "docker:prod:up": "docker-compose -f docker-compose.prod.yml up --build -d",
+    "docker:prod:down": "docker-compose -f docker-compose.prod.yml down"
+  },
+  "workspaces": [
+    "client"
+  ],
+  "keywords": [
+    "instagram",
+    "automation",
+    "dm",
+    "comment-to-dm",
+    "meta-graph-api",
+    "fastapi",
+    "nextjs",
+    "arq"
+  ],
+  "author": "Comlina Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^10.0.5"
+  }
+}

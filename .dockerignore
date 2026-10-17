@@ -1,0 +1,24 @@
+# Prevent secrets, local databases, build artifacts and dependencies from leaking into Docker images
+.env
+.env.*
+**/.env
+**/.env.*
+*.db
+*.sqlite
+*.sqlite3
+.git
+.gitignore
+node_modules
+client/node_modules
+.next
+.next_app
+.build_dist
+.venv
+venv
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+*.log
+.DS_Store
+Thumbs.db

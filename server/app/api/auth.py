@@ -1,0 +1,272 @@
+# server/app/api/auth.py
+import uuid
+import hashlib
+import os
+import logging
+from datetime import datetime, timedelta, timezone
+from typing import Dict, Any, Optional
+from fastapi import APIRouter, Depends, HTTPException, status
+from pydantic import BaseModel, EmailStr
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+import jwt as pyjwt
+
+from app.api.deps import get_current_user, get_current_workspace, get_db
+from app.core.config import settings
+from app.models import User, Workspace, WorkspaceMember
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+# ---------- Schemas ----------
+
+class SignupRequest(BaseModel):
+    email: str
+    password: str
+    full_name: Optional[str] = None
+
+
+class LoginRequest(BaseModel):
+    email: str
+    password: str
+
+
+class AuthResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    user: Dict[str, Any]
+    workspace: Optional[Dict[str, Any]] = None
+
+
+# ---------- Password Utilities ----------
+
+def _hash_password(password: str, salt: Optional[bytes] = None) -> tuple[str, str]:
+    """Hash password with PBKDF2-HMAC-SHA256. Returns (hash_hex, salt_hex)."""
+    if salt is None:
+        salt = os.urandom(32)
+    pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return pw_hash.hex(), salt.hex()
+
+
+def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
+    """Verify password against stored PBKDF2 hash."""
+    salt = bytes.fromhex(stored_salt)
+    pw_hash = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), salt, 100_000)
+    return pw_hash.hex() == stored_hash
+
+
+# ---------- JWT Utilities ----------
+
+def create_backend_jwt(user_id: str, email: str) -> str:
+    """Issue a signed HS256 JWT for backend-authenticated users."""
+    now = datetime.now(timezone.utc)
+    payload = {
+        "sub": user_id,
+        "email": email,
+        "iss": "comlina-backend",
+        "aud": "authenticated",
+        "iat": now,
+        "exp": now + timedelta(hours=24),
+        "role": "authenticated",
+    }
+    return pyjwt.encode(payload, settings.BACKEND_JWT_SECRET, algorithm="HS256")
+
+
+# ---------- Helper: provision default workspace ----------
+
+async def _ensure_default_workspace(user: User, db: AsyncSession) -> Optional[Workspace]:
+    """Return user's first workspace, creating a default if none exists."""
+    stmt = (
+        select(Workspace)
+        .join(WorkspaceMember, Workspace.id == WorkspaceMember.workspace_id)
+        .where(WorkspaceMember.user_id == user.id)
+        .limit(1)
+    )
+    res = await db.execute(stmt)
+    workspace = res.scalars().first()
+
+    if not workspace:
+        workspace = Workspace(
+            name="My Workspace",
+            slug=f"workspace-{str(user.id)[:8]}",
+        )
+        db.add(workspace)
+        await db.flush()
+        member = WorkspaceMember(
+            workspace_id=workspace.id,
+            user_id=user.id,
+            role="OWNER",
+        )
+        db.add(member)
+        await db.commit()
+        await db.refresh(workspace)
+
+    return workspace
+
+
+# ---------- Endpoints ----------
+
+@router.post("/signup", response_model=AuthResponse)
+async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Register a new user with email + password.
+    Returns a signed JWT and the provisioned default workspace.
+    """
+    email = body.email.strip().lower()
+    password = body.password
+
+    if len(password) < 6:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Password must be at least 6 characters",
+        )
+
+    # Check if user already exists
+    existing = await db.execute(select(User).where(User.email == email))
+    if existing.scalars().first():
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="An account with this email already exists. Please sign in.",
+        )
+
+    # Hash password
+    pw_hash, pw_salt = _hash_password(password)
+
+    # Create user
+    user_id = uuid.uuid4()
+    full_name = (body.full_name or "").strip() or email.split("@")[0]
+    user = User(
+        id=user_id,
+        email=email,
+        full_name=full_name,
+    )
+    # Store password hash in the User's metadata (using avatar_url field temporarily
+    # since the schema doesn't have a password column — a proper migration should add one)
+    # For now we use a convention: timezone field stores "pbkdf2:<salt>:<hash>"
+    user.timezone = f"pbkdf2:{pw_salt}:{pw_hash}"
+
+    db.add(user)
+    await db.flush()
+
+    # Provision default workspace
+    workspace = await _ensure_default_workspace(user, db)
+    await db.commit()
+
+    # Issue JWT
+    token = create_backend_jwt(str(user_id), email)
+
+    logger.info(f"[AUTH] New user registered: {email} ({user_id})")
+
+    ws_data = None
+    if workspace:
+        ws_data = {
+            "id": str(workspace.id),
+            "name": workspace.name,
+            "slug": workspace.slug,
+        }
+
+    return AuthResponse(
+        access_token=token,
+        user={
+            "id": str(user_id),
+            "email": email,
+            "full_name": full_name,
+        },
+        workspace=ws_data,
+    )
+
+
+@router.post("/login", response_model=AuthResponse)
+async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Authenticate with email + password against the backend user store.
+    Returns a signed JWT and the user's workspace.
+    """
+    email = body.email.strip().lower()
+    password = body.password
+
+    res = await db.execute(select(User).where(User.email == email))
+    user = res.scalars().first()
+
+    if not user:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    # Verify password from the timezone field convention
+    tz_val = user.timezone or ""
+    if not tz_val.startswith("pbkdf2:"):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    parts = tz_val.split(":", 2)
+    if len(parts) != 3:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    _, stored_salt, stored_hash = parts
+    if not _verify_password(password, stored_hash, stored_salt):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid email or password",
+        )
+
+    # Provision workspace if needed
+    workspace = await _ensure_default_workspace(user, db)
+
+    token = create_backend_jwt(str(user.id), email)
+
+    logger.info(f"[AUTH] User logged in: {email}")
+
+    ws_data = None
+    if workspace:
+        ws_data = {
+            "id": str(workspace.id),
+            "name": workspace.name,
+            "slug": workspace.slug,
+        }
+
+    return AuthResponse(
+        access_token=token,
+        user={
+            "id": str(user.id),
+            "email": user.email,
+            "full_name": user.full_name,
+        },
+        workspace=ws_data,
+    )
+
+
+@router.get("/me")
+async def get_current_profile(
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+) -> Dict[str, Any]:
+    """
+    Returns the authenticated user's profile and active workspace.
+    Used by AuthGuard to bootstrap the frontend session.
+    """
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
+        "timezone": user.timezone if not (user.timezone or "").startswith("pbkdf2:") else None,
+        "workspace": {
+            "id": str(workspace.id),
+            "name": workspace.name,
+            "slug": workspace.slug,
+            "plan_tier": workspace.plan_tier or "FREE",
+            "plan_status": workspace.plan_status or "ACTIVE",
+            "max_automations": workspace.max_automations,
+            "max_accounts": workspace.max_accounts,
+        },
+    }
+
