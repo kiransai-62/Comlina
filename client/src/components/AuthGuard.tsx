@@ -10,6 +10,8 @@ import { BrandLogo } from '@/components/BrandLogo';
 
 export const AUTH_ENABLED = true; // Authentication guard enabled
 
+export type AuthState = 'initializing' | 'authenticated' | 'unauthenticated' | 'error';
+
 export function AuthGuard({ children }: { children: React.ReactNode }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -26,13 +28,14 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     pathname.startsWith('/signup') ||
     pathname.startsWith('/auth');
 
-  const [loading, setLoading] = useState(AUTH_ENABLED && !isPublicRoute);
-  const [authenticated, setAuthenticated] = useState(!AUTH_ENABLED || isPublicRoute);
+  const [authState, setAuthState] = useState<AuthState>(
+    !AUTH_ENABLED || isPublicRoute ? 'authenticated' : 'initializing'
+  );
+  const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   useEffect(() => {
     if (!AUTH_ENABLED || isPublicRoute) {
-      setAuthenticated(true);
-      setLoading(false);
+      setAuthState('authenticated');
       return;
     }
 
@@ -48,35 +51,27 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
             const { data: exchangeData, error: exchangeError } = await supabase.auth.exchangeCodeForSession(code);
             if (!exchangeError && exchangeData?.session) {
               window.history.replaceState({}, document.title, url.pathname);
-              // fall through to backend sync below
             }
           }
         }
 
         // --- Step 2: Check if we have a valid token (Supabase or backend) ---
-        const hasToken = await authService.isAuthenticated();
+        let hasToken = await authService.isAuthenticated();
 
         if (!hasToken) {
-          // If Supabase is configured, brief retry for storage hydration
-          if (isSupabaseConfigured) {
-            await new Promise((resolve) => setTimeout(resolve, 350));
-            const retryHasToken = await authService.isAuthenticated();
-            if (!retryHasToken) {
-              if (mounted) {
-                setAuthenticated(false);
-                setLoading(false);
-                router.replace('/login');
-              }
-              return;
-            }
-          } else {
-            if (mounted) {
-              setAuthenticated(false);
-              setLoading(false);
-              router.replace('/login');
-            }
-            return;
+          // Attempt proactive refresh before declaring unauthenticated
+          const refreshed = await authService.refreshToken();
+          if (refreshed) {
+            hasToken = true;
           }
+        }
+
+        if (!hasToken) {
+          if (mounted) {
+            setAuthState('unauthenticated');
+            router.replace('/login');
+          }
+          return;
         }
 
         // --- Step 3: Bootstrap with backend — provision user + workspace via GET /api/auth/me ---
@@ -93,15 +88,20 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
         }
 
         if (mounted) {
-          setAuthenticated(true);
-          setLoading(false);
+          setAuthState('authenticated');
         }
-      } catch (err) {
+      } catch (err: any) {
         console.error('AuthGuard session verification error:', err);
         if (mounted) {
-          setAuthenticated(false);
-          setLoading(false);
-          router.replace('/login');
+          // If token exists but network/server error, do not aggressively wipe credentials
+          const hasToken = await authService.isAuthenticated();
+          if (hasToken) {
+            setAuthState('error');
+            setErrorMessage('Unable to reach authentication server. Please check your connection.');
+          } else {
+            setAuthState('unauthenticated');
+            router.replace('/login');
+          }
         }
       }
     }
@@ -111,17 +111,17 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     // Listen for Supabase auth state changes (only relevant when Supabase is configured)
     let unsubscribe: (() => void) | undefined;
     if (isSupabaseConfigured) {
-      const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
         if (event === 'SIGNED_OUT') {
-          if (mounted) {
-            setAuthenticated(false);
-            setLoading(false);
+          // Verify backend token before treating as unauthenticated
+          const isAuth = await authService.isAuthenticated();
+          if (!isAuth && mounted) {
+            setAuthState('unauthenticated');
             router.replace('/login');
           }
         } else if (session) {
           if (mounted) {
-            setAuthenticated(true);
-            setLoading(false);
+            setAuthState('authenticated');
           }
         }
       });
@@ -138,7 +138,7 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     return <>{children}</>;
   }
 
-  if (loading) {
+  if (authState === 'initializing') {
     return (
       <div className="min-h-screen flex flex-col items-center justify-center bg-[#FBFBFA]">
         <div className="flex flex-col items-center space-y-4">
@@ -152,7 +152,39 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
     );
   }
 
-  if (!authenticated) {
+  if (authState === 'error') {
+    return (
+      <div className="min-h-screen flex flex-col items-center justify-center bg-[#FBFBFA] px-4 text-center">
+        <div className="bg-white border border-[#ECECE8] rounded-2xl p-6 max-w-sm w-full shadow-xs space-y-4">
+          <BrandLogo variant="mark" height={40} className="mx-auto" />
+          <div>
+            <h2 className="text-sm font-bold text-[#111110]">Connection Problem</h2>
+            <p className="text-xs text-[#70706B] mt-1">
+              {errorMessage || 'Unable to connect to the authentication server.'}
+            </p>
+          </div>
+          <div className="flex flex-col gap-2 pt-2">
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="w-full py-2 bg-[#064125] hover:bg-[#0A5A34] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
+            >
+              Retry Connection
+            </button>
+            <button
+              type="button"
+              onClick={() => authService.signOut()}
+              className="w-full py-2 bg-transparent hover:bg-[#F4F4F0] text-[#70706B] hover:text-[#111110] text-xs font-semibold rounded-xl transition-colors cursor-pointer"
+            >
+              Sign In Again
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  if (authState === 'unauthenticated') {
     return null;
   }
 

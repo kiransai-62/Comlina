@@ -100,94 +100,6 @@ export function Sidebar() {
           );
         })}
       </nav>
-
-      {/* Pricing & Plans Left-Bottom Component */}
-      <div className="p-3.5 border-t border-[#ECECE8] bg-white">
-        <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#F4FBF6] via-[#F9FDFB] to-white p-3.5 border border-[#D1EADC] shadow-xs hover:border-[#15803D]/40 transition-all group">
-          {/* Subtle decorative ambient flare in corner */}
-          <div className="absolute -top-6 -right-6 w-16 h-16 bg-[#22C55E]/10 rounded-full blur-md pointer-events-none" />
-
-          {/* Header Row: Pricing & Plans + Plan Badge */}
-          <div className="flex items-center justify-between relative z-10">
-            <Link
-              href="/pricing"
-              onClick={() => isMobile && setIsMobileMenuOpen(false)}
-              className="flex items-center gap-1.5 group-hover:text-[#064125] transition-colors"
-            >
-              <div className="w-5 h-5 rounded-md bg-[#EAF6EE] text-[#15803D] flex items-center justify-center shrink-0 shadow-2xs">
-                <Sparkles size={11} className="text-[#15803D]" />
-              </div>
-              <span className="text-[12px] font-bold text-[#111110] tracking-tight">
-                Pricing & Plans
-              </span>
-            </Link>
-            <PlanBadge tier={planTier} size="xs" />
-          </div>
-
-          {/* Current Tier & Quota Usage */}
-          <div className="mt-2.5 relative z-10">
-            <div className="flex items-baseline justify-between">
-              <span className="text-[13px] font-extrabold text-[#111110] capitalize">
-                {planTier.toLowerCase()} Plan
-              </span>
-              <span className="text-[11px] font-semibold text-[#70706B]">
-                {usage ? (
-                  `${usage.posts_used} / ${usage.posts_limit === -1 ? '∞' : usage.posts_limit} posts`
-                ) : (
-                  '0 / 10 posts'
-                )}
-              </span>
-            </div>
-
-            {/* Smooth Rounded Progress Bar */}
-            <div className="w-full bg-[#E5ECE7] h-1.5 rounded-full mt-1.5 overflow-hidden">
-              <div 
-                className="bg-gradient-to-r from-[#15803D] to-[#22C55E] h-full rounded-full transition-all duration-300"
-                style={{
-                  width: `${
-                    usage && usage.posts_limit > 0 
-                      ? Math.min(100, Math.max(8, (usage.posts_used / usage.posts_limit) * 100)) 
-                      : 10
-                  }%`
-                }}
-              />
-            </div>
-
-            <div className="flex items-center justify-between text-[10.5px] text-[#70706B] mt-1.5">
-              <span>{usage ? `${usage.max_dms_per_post} DMs/post` : '99 DMs/post'}</span>
-              {planTier === 'FREE' && (
-                <span className="text-[#15803D] font-medium">10 posts quota</span>
-              )}
-            </div>
-          </div>
-
-          {/* High-Converting Unified CTA Button */}
-          <Link
-            href="/pricing"
-            onClick={() => isMobile && setIsMobileMenuOpen(false)}
-            className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 bg-[#064125] hover:bg-[#0A5A34] active:scale-[0.99] text-white text-[12px] font-semibold rounded-xl text-center transition-all shadow-xs group-hover:shadow hover:-translate-y-0.5 relative z-10"
-          >
-            <span>
-              {planTier === 'FREE'
-                ? 'Upgrade Plan'
-                : planTier === 'PREMIUM'
-                ? 'Upgrade to Pro'
-                : 'View Entitlements'}
-            </span>
-            {planTier === 'FREE' && (
-              <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded text-white font-medium">
-                ₹199
-              </span>
-            )}
-            {planTier === 'PREMIUM' && (
-              <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded text-white font-medium">
-                ₹399
-              </span>
-            )}
-            <ArrowRight size={13} className="text-[#86EFAC] transition-transform group-hover:translate-x-0.5" />
-          </Link>
-        </div>
-      </div>
     </>
   );
 
@@ -196,6 +108,7 @@ export function Sidebar() {
       {/* 1. Desktop Persistent Sidebar (>= 1024px) */}
       <aside className="hidden lg:flex w-64 bg-white border-r border-[#ECECE8] flex-col h-screen select-none shrink-0">
         {renderNavContent(false)}
+        <PlanSummary isMobile={false} />
       </aside>
 
       {/* 2. Mobile & Tablet Slide-Over Drawer (< 1024px) */}
@@ -209,10 +122,118 @@ export function Sidebar() {
             onClick={(e) => e.stopPropagation()}
           >
             {renderNavContent(true)}
+            {/* Minimal compact mobile status without duplicating the full desktop pricing widget */}
+            <div className="p-4 border-t border-[#ECECE8] bg-[#FBFBFA] flex items-center justify-between">
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-bold text-[#111110] capitalize">{planTier.toLowerCase()} Plan</span>
+                <PlanBadge tier={planTier} size="xs" />
+              </div>
+              <Link
+                href="/pricing"
+                onClick={() => setIsMobileMenuOpen(false)}
+                className="text-xs font-bold text-[#064125] hover:underline"
+              >
+                Upgrade →
+              </Link>
+            </div>
           </div>
         </div>
       )}
     </>
+  );
+}
+
+// Dedicated PlanSummary component rendered once in the desktop sidebar
+function PlanSummary({ isMobile = false, onCloseMobile }: { isMobile?: boolean; onCloseMobile?: () => void }) {
+  const { planTier, usage } = usePlan();
+
+  return (
+    <div className="p-3.5 border-t border-[#ECECE8] bg-white">
+      <div className="relative overflow-hidden rounded-2xl bg-gradient-to-b from-[#F4FBF6] via-[#F9FDFB] to-white p-3.5 border border-[#D1EADC] shadow-xs hover:border-[#15803D]/40 transition-all group">
+        {/* Subtle decorative ambient flare in corner */}
+        <div className="absolute -top-6 -right-6 w-16 h-16 bg-[#22C55E]/10 rounded-full blur-md pointer-events-none" />
+
+        {/* Header Row: Pricing & Plans + Plan Badge */}
+        <div className="flex items-center justify-between relative z-10">
+          <Link
+            href="/pricing"
+            onClick={() => onCloseMobile?.()}
+            className="flex items-center gap-1.5 group-hover:text-[#064125] transition-colors"
+          >
+            <div className="w-5 h-5 rounded-md bg-[#EAF6EE] text-[#15803D] flex items-center justify-center shrink-0 shadow-2xs">
+              <Sparkles size={11} className="text-[#15803D]" />
+            </div>
+            <span className="text-[12px] font-bold text-[#111110] tracking-tight">
+              Pricing & Plans
+            </span>
+          </Link>
+          <PlanBadge tier={planTier} size="xs" />
+        </div>
+
+        {/* Current Tier & Quota Usage */}
+        <div className="mt-2.5 relative z-10">
+          <div className="flex items-baseline justify-between">
+            <span className="text-[13px] font-extrabold text-[#111110] capitalize">
+              {planTier.toLowerCase()} Plan
+            </span>
+            <span className="text-[11px] font-semibold text-[#70706B]">
+              {usage ? (
+                `${usage.posts_used} / ${usage.posts_limit === -1 ? '∞' : usage.posts_limit} posts`
+              ) : (
+                '0 / 10 posts'
+              )}
+            </span>
+          </div>
+
+          {/* Smooth Rounded Progress Bar */}
+          <div className="w-full bg-[#E5ECE7] h-1.5 rounded-full mt-1.5 overflow-hidden">
+            <div 
+              className="bg-gradient-to-r from-[#15803D] to-[#22C55E] h-full rounded-full transition-all duration-300"
+              style={{
+                width: `${
+                  usage && usage.posts_limit > 0 
+                    ? Math.min(100, Math.max(8, (usage.posts_used / usage.posts_limit) * 100)) 
+                    : 10
+                }%`
+              }}
+            />
+          </div>
+
+          <div className="flex items-center justify-between text-[10.5px] text-[#70706B] mt-1.5">
+            <span>{usage ? `${usage.max_dms_per_post} DMs/post` : '99 DMs/post'}</span>
+            {planTier === 'FREE' && (
+              <span className="text-[#15803D] font-medium">10 posts quota</span>
+            )}
+          </div>
+        </div>
+
+        {/* High-Converting Unified CTA Button */}
+        <Link
+          href="/pricing"
+          onClick={() => onCloseMobile?.()}
+          className="mt-3 flex items-center justify-center gap-1.5 w-full py-2 bg-[#064125] hover:bg-[#0A5A34] active:scale-[0.99] text-white text-[12px] font-semibold rounded-xl text-center transition-all shadow-xs group-hover:shadow hover:-translate-y-0.5 relative z-10"
+        >
+          <span>
+            {planTier === 'FREE'
+              ? 'Upgrade Plan'
+              : planTier === 'PREMIUM'
+              ? 'Upgrade to Pro'
+              : 'View Entitlements'}
+          </span>
+          {planTier === 'FREE' && (
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded text-white font-medium">
+              ₹199
+            </span>
+          )}
+          {planTier === 'PREMIUM' && (
+            <span className="text-[10px] bg-white/20 px-1.5 py-0.5 rounded text-white font-medium">
+              ₹399
+            </span>
+          )}
+          <ArrowRight size={13} className="text-[#86EFAC] transition-transform group-hover:translate-x-0.5" />
+        </Link>
+      </div>
+    </div>
   );
 }
 

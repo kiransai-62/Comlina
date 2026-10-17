@@ -114,6 +114,12 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
                 audience="authenticated",
             )
             if payload.get("iss") == "comlina-backend":
+                if payload.get("token_type") == "refresh":
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Refresh token cannot be used as an access token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
                 logger.debug(f"[AUTH] Verified backend-issued JWT for user={payload.get('email')}")
                 return payload
         except jwt.PyJWTError:
@@ -128,6 +134,12 @@ def decode_supabase_jwt(token: str) -> Dict[str, Any]:
                 options={"verify_aud": False},
             )
             if payload.get("iss") == "comlina-backend":
+                if payload.get("token_type") == "refresh":
+                    raise HTTPException(
+                        status_code=status.HTTP_401_UNAUTHORIZED,
+                        detail="Refresh token cannot be used as an access token",
+                        headers={"WWW-Authenticate": "Bearer"},
+                    )
                 logger.debug(f"[AUTH] Verified backend-issued JWT (relaxed aud) for user={payload.get('email')}")
                 return payload
         except jwt.PyJWTError:

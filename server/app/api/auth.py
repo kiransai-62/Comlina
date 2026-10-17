@@ -33,8 +33,19 @@ class LoginRequest(BaseModel):
     password: str
 
 
+class RefreshRequest(BaseModel):
+    refresh_token: str
+
+
+class TokenRefreshResponse(BaseModel):
+    access_token: str
+    refresh_token: str
+    token_type: str = "bearer"
+
+
 class AuthResponse(BaseModel):
     access_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     user: Dict[str, Any]
     workspace: Optional[Dict[str, Any]] = None
@@ -59,16 +70,22 @@ def _verify_password(password: str, stored_hash: str, stored_salt: str) -> bool:
 
 # ---------- JWT Utilities ----------
 
-def create_backend_jwt(user_id: str, email: str) -> str:
+def create_backend_jwt(user_id: str, email: str, token_type: str = "access") -> str:
     """Issue a signed HS256 JWT for backend-authenticated users."""
     now = datetime.now(timezone.utc)
+    if token_type == "refresh":
+        exp = now + timedelta(days=30)
+    else:
+        exp = now + timedelta(days=7)  # 7-day stable access token
+
     payload = {
         "sub": user_id,
         "email": email,
         "iss": "comlina-backend",
         "aud": "authenticated",
         "iat": now,
-        "exp": now + timedelta(hours=24),
+        "exp": exp,
+        "token_type": token_type,
         "role": "authenticated",
     }
     return pyjwt.encode(payload, settings.BACKEND_JWT_SECRET, algorithm="HS256")
@@ -154,8 +171,9 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
     workspace = await _ensure_default_workspace(user, db)
     await db.commit()
 
-    # Issue JWT
-    token = create_backend_jwt(str(user_id), email)
+    # Issue JWT access & refresh tokens
+    token = create_backend_jwt(str(user_id), email, token_type="access")
+    refresh_token = create_backend_jwt(str(user_id), email, token_type="refresh")
 
     logger.info(f"[AUTH] New user registered: {email} ({user_id})")
 
@@ -169,6 +187,7 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
 
     return AuthResponse(
         access_token=token,
+        refresh_token=refresh_token,
         user={
             "id": str(user_id),
             "email": email,
@@ -221,7 +240,8 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     # Provision workspace if needed
     workspace = await _ensure_default_workspace(user, db)
 
-    token = create_backend_jwt(str(user.id), email)
+    token = create_backend_jwt(str(user.id), email, token_type="access")
+    refresh_token = create_backend_jwt(str(user.id), email, token_type="refresh")
 
     logger.info(f"[AUTH] User logged in: {email}")
 
@@ -235,12 +255,97 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
     return AuthResponse(
         access_token=token,
+        refresh_token=refresh_token,
         user={
             "id": str(user.id),
             "email": user.email,
             "full_name": user.full_name,
         },
         workspace=ws_data,
+    )
+
+
+@router.post("/refresh", response_model=TokenRefreshResponse)
+async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+    """
+    Refreshes an expired or active access token using a valid backend refresh token.
+    Validates token signature, token_type == 'refresh', and that the user account still exists.
+    """
+    token = body.refresh_token.strip()
+    if not token:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Missing refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        payload = pyjwt.decode(
+            token,
+            settings.BACKEND_JWT_SECRET,
+            algorithms=["HS256"],
+            options={"verify_aud": False},
+        )
+    except pyjwt.ExpiredSignatureError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Refresh token has expired. Please sign in again.",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+    except pyjwt.PyJWTError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    if payload.get("iss") != "comlina-backend" or payload.get("token_type") != "refresh":
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token type",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    user_id_str = payload.get("sub")
+    email = payload.get("email")
+    if not user_id_str or not email:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid token payload",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    try:
+        user_uuid = uuid.UUID(user_id_str)
+    except ValueError:
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid user ID in token",
+            headers={"WWW-Authenticate": "Bearer"},
+        )
+
+    # Verify user exists and is active
+    stmt = select(User).where(User.id == user_uuid)
+    res = await db.execute(stmt)
+    user = res.scalars().first()
+    if not user:
+        stmt_email = select(User).where(User.email == email)
+        res_email = await db.execute(stmt_email)
+        user = res_email.scalars().first()
+        if not user:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="User account no longer exists",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+    new_access = create_backend_jwt(str(user.id), user.email, token_type="access")
+    new_refresh = create_backend_jwt(str(user.id), user.email, token_type="refresh")
+
+    return TokenRefreshResponse(
+        access_token=new_access,
+        refresh_token=new_refresh,
+        token_type="bearer",
     )
 
 

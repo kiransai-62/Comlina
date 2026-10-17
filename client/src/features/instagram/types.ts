@@ -14,4 +14,12 @@ export interface ConnectedInstagramAccount {
   is_active?: boolean;
   connectedAt?: string;
   connected_at?: string;
+  status?: 'CONNECTED' | 'EXPIRED' | 'REAUTHORIZATION_REQUIRED' | 'EXPIRING_SOON' | string;
 }
+
+export type InstagramConnectionState =
+  | 'checking'
+  | 'connected'
+  | 'disconnected'
+  | 'reauthorization_required'
+  | 'error';

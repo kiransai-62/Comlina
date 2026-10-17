@@ -52,11 +52,11 @@ export function FlowActionButtons({
       <button
         type="button"
         onClick={onPublish}
-        disabled={isSaving}
+        disabled={isSaving || !isValid}
         className={`inline-flex items-center gap-1.5 px-4.5 py-2 text-xs font-bold rounded-2xl transition-all cursor-pointer shadow-xs ${
           isValid
-            ? 'bg-[#E8E8E3] hover:bg-[#062E1A] hover:text-white text-[#52524E]'
-            : 'bg-[#E8E8E3] text-[#70706B] opacity-75'
+            ? 'bg-[#064125] hover:bg-[#0A5A34] text-white shadow-sm hover:shadow'
+            : 'bg-[#E8E8E3] text-[#70706B] opacity-60 cursor-not-allowed'
         }`}
         title={isValid ? 'Ready to publish' : 'Complete required setup to publish'}
       >

@@ -33,10 +33,9 @@ import { FollowUpSection } from '@/components/automations/FollowUpSection';
 import { ValidationBar } from '@/components/automations/ValidationBar';
 import { PublishModal } from '@/components/automations/PublishModal';
 import { InstagramPhonePreview } from '@/components/automations/InstagramPhonePreview';
-import { InstagramMediaItem, SAMPLE_INSTAGRAM_POSTS } from '@/components/automations/PostSelector';
+import { InstagramMediaItem } from '@/components/automations/PostSelector';
 import { UpgradeModal } from '@/components/billing/UpgradeModal';
 import { usePlan } from '@/hooks/usePlan';
-import { Eye, Sparkles, X } from 'lucide-react';
 
 export default function CreateAutomationPage() {
   const router = useRouter();
@@ -45,7 +44,7 @@ export default function CreateAutomationPage() {
   const { openUpgradeModal } = usePlan();
 
   // Active Flow View: 'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'
-  const [activeFlowView, setActiveFlowView] = useState<'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'>('picker');
+  const [activeFlowView, setActiveFlowView] = useState<'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'>('comment_to_dm');
 
   // Single Source of Truth: Automation Draft State
   const [draft, setDraft] = useState<AutomationDraft>(DEFAULT_AUTOMATION_DRAFT);
@@ -58,7 +57,7 @@ export default function CreateAutomationPage() {
   const [isPublishing, setIsPublishing] = useState(false);
   const [isPublishSuccess, setIsPublishSuccess] = useState(false);
   const [createdAutomationId, setCreatedAutomationId] = useState<string | undefined>();
-  const [mobilePreviewOpen, setMobilePreviewOpen] = useState(false);
+  const [mobileStudioTab, setMobileStudioTab] = useState<'editor' | 'preview'>('editor');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
 
   // Dynamic live preview state synced from whichever automation flow is active
@@ -97,10 +96,10 @@ export default function CreateAutomationPage() {
     staleTime: 60_000,
   });
   const realPosts: InstagramMediaItem[] = useMemo(() => {
-    if (mediaQuery.data && mediaQuery.data.length > 0) {
+    if (mediaQuery.data) {
       return mediaQuery.data as InstagramMediaItem[];
     }
-    return SAMPLE_INSTAGRAM_POSTS;
+    return [];
   }, [mediaQuery.data]);
   const selectedPost: InstagramMediaItem | undefined = useMemo(
     () => realPosts.find((p) => p.id === draft.trigger.postId), [realPosts, draft.trigger.postId]);
@@ -355,9 +354,9 @@ export default function CreateAutomationPage() {
     const isDraft = flowData?.status === 'DRAFT';
     try {
       const created = await createAutomation({
-        name: draft.name || 'Comment to DM Flow',
+        name: flowData?.name || draft.name || 'Comment to DM Flow',
         description: 'Automated Comment to DM Instagram responses',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+        instagram_account_id: flowData?.instagram_account_id || draft.instagramAccountId || accounts[0]?.id,
         trigger_type: 'COMMENT',
         flow_definition: {
           version: 2,
@@ -473,13 +472,13 @@ export default function CreateAutomationPage() {
     setActiveFlowView('picker');
   };
 
-  // Helper layout that wraps any automation flow in an 8-col studio + 4-col sticky Live Instagram Simulator
+  // Helper layout that wraps any automation flow in a coordinated 2-column studio on desktop and seamless tabbed studio on tablet & mobile
   const renderFlowWithPreview = (
     flowBadge: string,
     flowContent: React.ReactNode
   ) => {
     return (
-      <div className="max-w-[1440px] mx-auto pb-28 text-[#111110] px-2 sm:px-4 lg:px-6 py-4">
+      <div className="w-full max-w-[1600px] mx-auto pb-16 text-[#111110] px-3 sm:px-6 lg:px-8 py-4">
         {errorMessage && (
           <div className="mb-6 p-4 bg-red-50 border border-red-200 text-red-800 text-xs rounded-2xl flex items-center justify-between animate-in fade-in">
             <span>{errorMessage}</span>
@@ -493,107 +492,100 @@ export default function CreateAutomationPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-          {/* LEFT COLUMN: THE FLOW STUDIO (8/12) */}
-          <div className="lg:col-span-8 min-w-0">
+        {/* TABLET & MOBILE (< 1200px): SLEEK SEGMENTED VIEW SWITCHER */}
+        <div className="xl:hidden flex items-center justify-center p-1 bg-[#F4F4F0] border border-[#ECECE8] rounded-2xl mb-5 max-w-sm mx-auto shadow-2xs">
+          <button
+            type="button"
+            onClick={() => setMobileStudioTab('editor')}
+            className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+              mobileStudioTab === 'editor'
+                ? 'bg-white text-[#111110] shadow-xs'
+                : 'text-[#70706B] hover:text-[#111110]'
+            }`}
+          >
+            ✏️ Configure Flow
+          </button>
+          <button
+            type="button"
+            onClick={() => setMobileStudioTab('preview')}
+            className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+              mobileStudioTab === 'preview'
+                ? 'bg-white text-[#064125] shadow-xs'
+                : 'text-[#70706B] hover:text-[#111110]'
+            }`}
+          >
+            📱 Live Preview ({flowBadge})
+          </button>
+        </div>
+
+        {/* MAIN STUDIO GRID */}
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+          {/* FLOW STUDIO: Always visible on desktop, or when mobileStudioTab is 'editor' */}
+          <div
+            className={`min-w-0 xl:col-span-7 2xl:col-span-8 ${
+              mobileStudioTab === 'preview' ? 'hidden xl:block' : 'block'
+            }`}
+          >
             {flowContent}
           </div>
 
-          {/* RIGHT COLUMN: STICKY LIVE INSTAGRAM SIMULATOR (4/12) */}
-          <aside className="hidden lg:block lg:col-span-4 sticky top-6">
-            <div className="bg-white border border-[#ECECE8] rounded-3xl p-5 shadow-xs space-y-4">
+          {/* RIGHT COLUMN: STICKY LIVE INSTAGRAM SIMULATOR (>= 1200px) OR CENTERED PREVIEW (< 1200px) */}
+          <aside
+            className={`xl:col-span-5 2xl:col-span-4 xl:sticky xl:top-6 ${
+              mobileStudioTab === 'editor' ? 'hidden xl:block' : 'block'
+            }`}
+          >
+            <div className="bg-white border border-[#ECECE8] rounded-3xl p-5 shadow-xs space-y-4 max-w-md mx-auto">
               <div className="flex items-center justify-between border-b border-[#F4F4F0] pb-3">
                 <div className="flex items-center gap-2">
                   <div className="w-2 h-2 rounded-full bg-[#15803D] animate-pulse" />
                   <span className="text-xs font-bold text-[#111110]">Live Instagram Simulator</span>
                 </div>
-                <span className="text-[10px] font-semibold text-[#15803D] bg-[#F0FDF4] px-2 py-0.5 rounded-full uppercase tracking-wide">
+                <span className="text-[10px] font-semibold text-[#15803D] bg-[#F0FDF4] px-2.5 py-0.5 rounded-full uppercase tracking-wide">
                   {flowBadge}
                 </span>
               </div>
 
               {/* Reactive Simulator consuming the exact live flow state */}
-              <InstagramPhonePreview
-                accountName={accountHandle}
-                avatarUrl={activeAccount?.profile_pic_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                selectedPost={livePreviewData.selectedPost || selectedPost}
-                keywords={livePreviewData.keywords || draft.conditions.keywords}
-                publicReplyEnabled={livePreviewData.publicReplyEnabled ?? draft.publicReply.enabled}
-                publicReplyText={livePreviewData.publicReplyText ?? draft.publicReply.messages[0] ?? ''}
-                openingDmEnabled={livePreviewData.openingDmEnabled ?? draft.privateDm.enabled}
-                openingDmText={livePreviewData.openingDmText ?? draft.privateDm.openingMessage}
-                openingDmButtonText={livePreviewData.openingDmButtonText ?? draft.privateDm.buttonText}
-                askFollowEnabled={livePreviewData.askFollowEnabled ?? draft.optionalActions.followerGate}
-                askFollowText={livePreviewData.askFollowText ?? draft.optionalActions.followerGateMessage}
-                askEmailEnabled={livePreviewData.askEmailEnabled ?? draft.optionalActions.emailCapture}
-                askEmailText={livePreviewData.askEmailText ?? draft.optionalActions.emailCaptureMessage}
-                deliveryText={livePreviewData.deliveryText ?? draft.resource.message}
-                deliveryLinkUrl={livePreviewData.deliveryLinkUrl ?? draft.resource.url}
-                deliveryLinkButtonText={livePreviewData.deliveryLinkButtonText ?? draft.resource.buttonText}
-                followupEnabled={livePreviewData.followupEnabled ?? draft.followUp.enabled}
-                followupHours={livePreviewData.followupHours ?? Math.round(draft.followUp.delayMinutes / 60)}
-                followupText={livePreviewData.followupText ?? draft.followUp.message}
-                defaultTab={livePreviewData.defaultTab}
-                isStoryFlow={livePreviewData.isStoryFlow}
-                storyImageUrl={livePreviewData.storyImageUrl}
-              />
-            </div>
-          </aside>
-        </div>
-
-        {/* MOBILE PREVIEW DRAWER */}
-        {mobilePreviewOpen && (
-          <div className="lg:hidden fixed inset-0 z-50 bg-black/60 backdrop-blur-xs flex flex-col justify-end p-2 animate-in fade-in duration-200">
-            <div className="bg-white rounded-t-3xl max-h-[92vh] overflow-y-auto p-4 space-y-4">
-              <div className="flex items-center justify-between border-b border-[#ECECE8] pb-3">
-                <span className="font-bold text-xs text-[#111110]">Mobile Live Preview</span>
-                <button
-                  type="button"
-                  onClick={() => setMobilePreviewOpen(false)}
-                  className="p-1 rounded-full text-[#70706B] hover:text-[#111110]"
-                >
-                  <X size={18} />
-                </button>
+              <div className="flex justify-center">
+                <InstagramPhonePreview
+                  accountName={accountHandle}
+                  avatarUrl={activeAccount?.profile_pic_url || null}
+                  selectedPost={livePreviewData.selectedPost || selectedPost}
+                  keywords={livePreviewData.keywords || draft.conditions.keywords}
+                  publicReplyEnabled={livePreviewData.publicReplyEnabled ?? draft.publicReply.enabled}
+                  publicReplyText={livePreviewData.publicReplyText ?? draft.publicReply.messages[0] ?? ''}
+                  openingDmEnabled={livePreviewData.openingDmEnabled ?? draft.privateDm.enabled}
+                  openingDmText={livePreviewData.openingDmText ?? draft.privateDm.openingMessage}
+                  openingDmButtonText={livePreviewData.openingDmButtonText ?? draft.privateDm.buttonText}
+                  askFollowEnabled={livePreviewData.askFollowEnabled ?? draft.optionalActions.followerGate}
+                  askFollowText={livePreviewData.askFollowText ?? draft.optionalActions.followerGateMessage}
+                  askEmailEnabled={livePreviewData.askEmailEnabled ?? draft.optionalActions.emailCapture}
+                  askEmailText={livePreviewData.askEmailText ?? draft.optionalActions.emailCaptureMessage}
+                  deliveryText={livePreviewData.deliveryText ?? draft.resource.message}
+                  deliveryLinkUrl={livePreviewData.deliveryLinkUrl ?? draft.resource.url}
+                  deliveryLinkButtonText={livePreviewData.deliveryLinkButtonText ?? draft.resource.buttonText}
+                  followupEnabled={livePreviewData.followupEnabled ?? draft.followUp.enabled}
+                  followupHours={livePreviewData.followupHours ?? Math.round(draft.followUp.delayMinutes / 60)}
+                  followupText={livePreviewData.followupText ?? draft.followUp.message}
+                  defaultTab={livePreviewData.defaultTab}
+                  isStoryFlow={livePreviewData.isStoryFlow}
+                  storyImageUrl={livePreviewData.storyImageUrl}
+                />
               </div>
 
-              <InstagramPhonePreview
-                accountName={accountHandle}
-                avatarUrl={activeAccount?.profile_pic_url || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80'}
-                selectedPost={livePreviewData.selectedPost || selectedPost}
-                keywords={livePreviewData.keywords || draft.conditions.keywords}
-                publicReplyEnabled={livePreviewData.publicReplyEnabled ?? draft.publicReply.enabled}
-                publicReplyText={livePreviewData.publicReplyText ?? draft.publicReply.messages[0] ?? ''}
-                openingDmEnabled={livePreviewData.openingDmEnabled ?? draft.privateDm.enabled}
-                openingDmText={livePreviewData.openingDmText ?? draft.privateDm.openingMessage}
-                openingDmButtonText={livePreviewData.openingDmButtonText ?? draft.privateDm.buttonText}
-                askFollowEnabled={livePreviewData.askFollowEnabled ?? draft.optionalActions.followerGate}
-                askFollowText={livePreviewData.askFollowText ?? draft.optionalActions.followerGateMessage}
-                askEmailEnabled={livePreviewData.askEmailEnabled ?? draft.optionalActions.emailCapture}
-                askEmailText={livePreviewData.askEmailText ?? draft.optionalActions.emailCaptureMessage}
-                deliveryText={livePreviewData.deliveryText ?? draft.resource.message}
-                deliveryLinkUrl={livePreviewData.deliveryLinkUrl ?? draft.resource.url}
-                deliveryLinkButtonText={livePreviewData.deliveryLinkButtonText ?? draft.resource.buttonText}
-                followupEnabled={livePreviewData.followupEnabled ?? draft.followUp.enabled}
-                followupHours={livePreviewData.followupHours ?? Math.round(draft.followUp.delayMinutes / 60)}
-                followupText={livePreviewData.followupText ?? draft.followUp.message}
-                defaultTab={livePreviewData.defaultTab}
-                isStoryFlow={livePreviewData.isStoryFlow}
-                storyImageUrl={livePreviewData.storyImageUrl}
-              />
+              {/* Mobile Return to Editor Button */}
+              <div className="xl:hidden pt-2 border-t border-[#ECECE8]">
+                <button
+                  type="button"
+                  onClick={() => setMobileStudioTab('editor')}
+                  className="w-full py-2.5 bg-[#F4F4F0] hover:bg-[#ECECE8] text-[#111110] font-bold text-xs rounded-xl transition-colors cursor-pointer"
+                >
+                  ← Return to Flow Editor
+                </button>
+              </div>
             </div>
-          </div>
-        )}
-
-        {/* STICKY BOTTOM MOBILE ACTION BAR */}
-        <div className="lg:hidden fixed bottom-0 inset-x-0 bg-white border-t border-[#ECECE8] p-3 flex items-center justify-between gap-3 shadow-lg z-40">
-          <button
-            type="button"
-            onClick={() => setMobilePreviewOpen(true)}
-            className="px-4 py-2.5 border border-[#ECECE8] rounded-xl text-xs font-semibold text-[#111110] flex items-center gap-1.5 cursor-pointer"
-          >
-            <Eye size={14} className="text-[#15803D]" />
-            <span>Preview</span>
-          </button>
+          </aside>
         </div>
 
         {/* CONFIRMATION & SUCCESS MODAL */}
@@ -655,17 +647,33 @@ export default function CreateAutomationPage() {
     );
   }
 
-  // VIEW 2: Dedicated "Comment to DM Flow" Studio with Live Preview Setup
+  // VIEW 2: Dedicated "Comment to DM Flow" Studio matching Reference Image 1
   if (activeFlowView === 'comment_to_dm') {
-    return renderFlowWithPreview(
-      'Comment to DM',
-      <CommentToDmFlow
-        onBack={() => setActiveFlowView('picker')}
-        onSave={handleSaveCommentToDm}
-        accountName={accountHandle}
-        isSaving={isPublishing}
-        onPreviewChange={handlePreviewChange}
-      />
+    return (
+      <div className="w-full text-[#111110]">
+        <CommentToDmFlow
+          onBack={() => setActiveFlowView('picker')}
+          onSave={handleSaveCommentToDm}
+          accountName={accountHandle}
+          accountId={draft.instagramAccountId}
+          accounts={accounts}
+          onSelectAccount={(acc) => {
+            setDraft((prev) => ({ ...prev, instagramAccountId: acc.id }));
+          }}
+          isSaving={isPublishing}
+        />
+        <PublishModal
+          isOpen={publishModalOpen}
+          onClose={() => setPublishModalOpen(false)}
+          onConfirmPublish={handleConfirmPublish}
+          isPublishing={isPublishing}
+          draft={draft}
+          isSuccess={isPublishSuccess}
+          createdId={createdAutomationId}
+          onResetForAnother={handleResetForAnother}
+        />
+        <UpgradeModal />
+      </div>
     );
   }
 

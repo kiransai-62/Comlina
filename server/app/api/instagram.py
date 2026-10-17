@@ -26,17 +26,48 @@ from app.core.encryption import encrypt_token, decrypt_token
 logger = logging.getLogger("instagram_api")
 router = APIRouter(prefix="/instagram", tags=["Instagram"])
 
+def _determine_account_status(account: InstagramAccount) -> str:
+    now = datetime.now(timezone.utc)
+    if not account.is_active:
+        return "REAUTHORIZATION_REQUIRED"
+    if account.token_expires_at:
+        exp = account.token_expires_at
+        if exp.tzinfo is None:
+            exp = exp.replace(tzinfo=timezone.utc)
+        if exp <= now:
+            return "EXPIRED"
+        elif exp <= now + timedelta(days=7):
+            return "EXPIRING_SOON"
+    return "CONNECTED"
+
 @router.get("/accounts", response_model=List[InstagramAccountOut])
 async def list_instagram_accounts(
     workspace: Workspace = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(InstagramAccount).where(
-        InstagramAccount.workspace_id == workspace.id,
-        InstagramAccount.is_active == True
+        InstagramAccount.workspace_id == workspace.id
     )
     res = await db.execute(stmt)
-    return list(res.scalars().all())
+    raw_accounts = list(res.scalars().all())
+
+    out = []
+    for acc in raw_accounts:
+        acc_dict = {
+            "id": acc.id,
+            "workspace_id": acc.workspace_id,
+            "ig_user_id": acc.ig_user_id,
+            "username": acc.username,
+            "account_type": acc.account_type,
+            "follower_count": acc.follower_count,
+            "profile_pic_url": acc.profile_pic_url,
+            "token_expires_at": acc.token_expires_at,
+            "is_active": acc.is_active,
+            "connected_at": acc.connected_at,
+            "status": _determine_account_status(acc),
+        }
+        out.append(InstagramAccountOut(**acc_dict))
+    return out
 
 def _normalize_media_item(item: Dict[str, Any]) -> Dict[str, Any]:
     m_type = "REEL" if item.get("media_type") == "VIDEO" or item.get("media_product_type") == "REELS" else "POST"
@@ -240,7 +271,7 @@ async def handle_oauth_callback(
     existing_any = res_global.scalar_one_or_none()
 
     if existing_any and existing_any.workspace_id != workspace.id:
-        # Retrieve original registering user's email for informative rejection
+        # Retrieve original registering user's email for informative rejection or rebinding
         orig_user_stmt = (
             select(User.email)
             .join(WorkspaceMember, WorkspaceMember.user_id == User.id)
@@ -249,20 +280,28 @@ async def handle_oauth_callback(
         )
         orig_res = await db.execute(orig_user_stmt)
         orig_email = orig_res.scalar_one_or_none()
-        email_hint = f" (linked to {orig_email[:3]}***@{orig_email.split('@')[-1]})" if orig_email else ""
 
-        logger.warning(
-            f"[SECURITY] Blocked link attempt: Instagram @{username} (ID {ig_user_id}) "
-            f"is already registered with workspace {existing_any.workspace_id}, rejected workspace {workspace.id}"
-        )
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=(
-                f"This Instagram account (@{username}) is already registered with another Comlina account{email_hint}. "
-                "An Instagram account can only be linked to the initial account used during registration. "
-                "Please sign in with your original account."
+        if orig_email and orig_email.strip().lower() == user.email.strip().lower():
+            # Same owner: gracefully rebind connection to the current active workspace
+            logger.info(
+                f"[INSTAGRAM] Rebinding Instagram account @{username} (ID {ig_user_id}) "
+                f"from previous workspace {existing_any.workspace_id} to current workspace {workspace.id}"
             )
-        )
+            existing_any.workspace_id = workspace.id
+        else:
+            email_hint = f" (linked to {orig_email[:3]}***@{orig_email.split('@')[-1]})" if orig_email else ""
+            logger.warning(
+                f"[SECURITY] Blocked link attempt: Instagram @{username} (ID {ig_user_id}) "
+                f"is already registered with workspace {existing_any.workspace_id}, rejected workspace {workspace.id}"
+            )
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=(
+                    f"This Instagram account (@{username}) is already registered with another Comlina account{email_hint}. "
+                    "An Instagram account can only be linked to the initial account used during registration. "
+                    "Please sign in with your original account."
+                )
+            )
 
     encrypted_token = encrypt_token(access_token)
     account = existing_any

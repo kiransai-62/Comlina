@@ -38,6 +38,7 @@ import { ConnectedInstagramAccount } from '@/features/instagram/types';
 import { usePlan } from '@/hooks/usePlan';
 import { PlanBadge } from '@/components/billing/PlanBadge';
 import { UpgradeModal } from '@/components/billing/UpgradeModal';
+import { triggerPwaPrompt } from '@/features/pwa';
 
 type TabType = 'general' | 'notifications' | 'billing' | 'danger';
 
@@ -535,7 +536,22 @@ export default function SettingsPage() {
 
                 <button
                   type="button"
-                  onClick={() => triggerToast('Audit logs opened')}
+                  onClick={() => triggerPwaPrompt()}
+                  className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-[#FBFBFA] transition-colors text-left cursor-pointer"
+                >
+                  <div className="flex items-center gap-3">
+                    <Download size={16} className="text-[#15803D]" />
+                    <div>
+                      <div className="text-xs font-semibold text-[#111110]">Install Comlina App</div>
+                      <div className="text-[11px] text-[#70706B]">Add to home screen or desktop.</div>
+                    </div>
+                  </div>
+                  <ChevronRight size={14} className="text-[#9E9E96]" />
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => triggerToast('Activity logs opened')}
                   className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-[#FBFBFA] transition-colors text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-3">

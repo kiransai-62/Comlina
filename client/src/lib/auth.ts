@@ -11,6 +11,7 @@ export interface AuthUser {
 
 export interface BackendAuthResponse {
   access_token: string;
+  refresh_token?: string;
   token_type: string;
   user: { id: string; email: string; full_name?: string };
   workspace?: { id: string; name: string; slug: string } | null;
@@ -24,21 +25,24 @@ export const AUTH_ENABLED = true;
  *  - If not → authenticates directly against FastAPI POST /api/auth/signup + /api/auth/login
  */
 class AuthService {
-  // Backend-only auth: store token + user in memory + localStorage
+  // Backend-only auth: store tokens + user in memory + localStorage
   private _backendToken: string | null = null;
+  private _backendRefreshToken: string | null = null;
   private _backendUser: AuthUser | null = null;
+  private _refreshPromise: Promise<string | null> | null = null;
 
   constructor() {
-    // Restore backend token from localStorage on init
+    // Restore backend tokens from localStorage on init
     if (typeof window !== 'undefined') {
-      this._backendToken = localStorage.getItem('comlina_token');
-      const storedUser = localStorage.getItem('comlina_user');
-      if (storedUser) {
-        try {
+      try {
+        this._backendToken = localStorage.getItem('comlina_token');
+        this._backendRefreshToken = localStorage.getItem('comlina_refresh_token');
+        const storedUser = localStorage.getItem('comlina_user');
+        if (storedUser) {
           this._backendUser = JSON.parse(storedUser);
-        } catch {
-          // ignore
         }
+      } catch {
+        // ignore
       }
     }
   }
@@ -71,7 +75,6 @@ class AuthService {
     }
 
     // Backend-only mode: synthesize a minimal Session-like object if we have a token
-    // (returns null so callers fall through to getToken() which returns the backend token)
     return null;
   }
 
@@ -95,20 +98,62 @@ class AuthService {
   async refreshToken(): Promise<string | null> {
     if (typeof window === 'undefined') return null;
 
-    if (isSupabaseConfigured) {
-      try {
-        console.info('[Auth] Manually triggering Supabase session refresh...');
-        const { data, error } = await supabase.auth.refreshSession();
-        if (!error && data.session?.access_token) {
-          console.info('[Auth] Session successfully refreshed.');
-          return data.session.access_token;
-        }
-      } catch (err) {
-        console.warn('[Auth] refreshSession error:', err);
-      }
+    // Single in-flight refresh promise to prevent concurrent refreshes racing
+    if (this._refreshPromise) {
+      return this._refreshPromise;
     }
 
-    return null;
+    this._refreshPromise = (async () => {
+      // 1. Try Supabase refresh if configured
+      if (isSupabaseConfigured) {
+        try {
+          const { data, error } = await supabase.auth.refreshSession();
+          if (!error && data.session?.access_token) {
+            return data.session.access_token;
+          }
+        } catch (err) {
+          console.warn('[Auth] Supabase refreshSession error:', err);
+        }
+      }
+
+      // 2. Try Backend token refresh
+      const refreshToken = this._backendRefreshToken || (typeof window !== 'undefined' ? localStorage.getItem('comlina_refresh_token') : null);
+      if (refreshToken) {
+        try {
+          const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+          const resp = await fetch(`${API_BASE}/auth/refresh`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ refresh_token: refreshToken }),
+          });
+
+          if (resp.ok) {
+            const data = await resp.json();
+            if (data.access_token) {
+              this._backendToken = data.access_token;
+              if (data.refresh_token) {
+                this._backendRefreshToken = data.refresh_token;
+              }
+              if (typeof window !== 'undefined') {
+                localStorage.setItem('comlina_token', data.access_token);
+                if (data.refresh_token) {
+                  localStorage.setItem('comlina_refresh_token', data.refresh_token);
+                }
+              }
+              return data.access_token;
+            }
+          }
+        } catch (err) {
+          console.warn('[Auth] Backend token refresh error:', err);
+        }
+      }
+
+      return null;
+    })().finally(() => {
+      this._refreshPromise = null;
+    });
+
+    return this._refreshPromise;
   }
 
   async getUser(): Promise<AuthUser | null> {
@@ -235,17 +280,31 @@ class AuthService {
   // ---------- Sync with Backend (for AuthGuard bootstrap) ----------
 
   async syncWithBackend(): Promise<{ user: AuthUser; workspace: { id: string; name: string; slug: string } } | null> {
-    const token = await this.getToken();
+    let token = await this.getToken();
     if (!token) return null;
 
     try {
       const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
-      const resp = await fetch(`${API_BASE}/auth/me`, {
+      let resp = await fetch(`${API_BASE}/auth/me`, {
         headers: {
           'Authorization': `Bearer ${token}`,
           'Content-Type': 'application/json',
         },
       });
+
+      // If token expired, attempt seamless token refresh once
+      if (resp.status === 401) {
+        const refreshedToken = await this.refreshToken();
+        if (refreshedToken) {
+          resp = await fetch(`${API_BASE}/auth/me`, {
+            headers: {
+              'Authorization': `Bearer ${refreshedToken}`,
+              'Content-Type': 'application/json',
+            },
+          });
+        }
+      }
+
       if (!resp.ok) return null;
       const data = await resp.json();
       return {
@@ -267,9 +326,11 @@ class AuthService {
     try {
       // Clear backend auth
       this._backendToken = null;
+      this._backendRefreshToken = null;
       this._backendUser = null;
       if (typeof window !== 'undefined') {
         localStorage.removeItem('comlina_token');
+        localStorage.removeItem('comlina_refresh_token');
         localStorage.removeItem('comlina_user');
         localStorage.removeItem('comlina_workspace');
       }
@@ -288,16 +349,26 @@ class AuthService {
 
   private _setBackendAuth(data: BackendAuthResponse) {
     this._backendToken = data.access_token;
+    if (data.refresh_token) {
+      this._backendRefreshToken = data.refresh_token;
+    }
     this._backendUser = {
       id: data.user.id,
       email: data.user.email,
       fullName: data.user.full_name,
     };
     if (typeof window !== 'undefined') {
-      localStorage.setItem('comlina_token', data.access_token);
-      localStorage.setItem('comlina_user', JSON.stringify(this._backendUser));
-      if (data.workspace) {
-        localStorage.setItem('comlina_workspace', JSON.stringify(data.workspace));
+      try {
+        localStorage.setItem('comlina_token', data.access_token);
+        if (data.refresh_token) {
+          localStorage.setItem('comlina_refresh_token', data.refresh_token);
+        }
+        localStorage.setItem('comlina_user', JSON.stringify(this._backendUser));
+        if (data.workspace) {
+          localStorage.setItem('comlina_workspace', JSON.stringify(data.workspace));
+        }
+      } catch {
+        // ignore
       }
     }
   }

@@ -207,7 +207,9 @@ export default function InstagramAccountsPage() {
             const connectedDate = acc.connected_at
               ? new Date(acc.connected_at).toLocaleDateString()
               : 'Recently connected';
-            const isActive = acc.is_active ?? acc.isActive ?? true;
+            const isReauthRequired = acc.status === 'REAUTHORIZATION_REQUIRED' || acc.status === 'EXPIRED' || acc.is_active === false;
+            const isExpiringSoon = acc.status === 'EXPIRING_SOON';
+            const isActive = !isReauthRequired;
             const tokenExpiry = acc.token_expires_at
               ? new Date(acc.token_expires_at).toLocaleDateString(undefined, {
                   year: 'numeric',
@@ -241,14 +243,21 @@ export default function InstagramAccountsPage() {
                       <div className="flex items-center gap-2.5">
                         <span className="font-bold text-base text-[#111110]">{handle}</span>
                         {isActive ? (
-                          <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#EAF6EE] text-[#15803D] rounded-full text-xs font-semibold">
-                            <span className="w-1.5 h-1.5 rounded-full bg-[#15803D]" />
-                            Connected
-                          </span>
+                          isExpiringSoon ? (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] rounded-full text-xs font-semibold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#D97706]" />
+                              Expiring Soon
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#EAF6EE] text-[#15803D] rounded-full text-xs font-semibold">
+                              <span className="w-1.5 h-1.5 rounded-full bg-[#15803D]" />
+                              Connected
+                            </span>
+                          )
                         ) : (
                           <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#FEF2F2] text-[#DC2626] border border-[#FEE2E2] rounded-full text-xs font-semibold">
                             <span className="w-1.5 h-1.5 rounded-full bg-[#DC2626]" />
-                            Reconnect
+                            Reconnect Required
                           </span>
                         )}
                       </div>
@@ -262,9 +271,13 @@ export default function InstagramAccountsPage() {
                         <span>Token expires: {tokenExpiry}</span>
                         <span>•</span>
                         {isActive ? (
-                          <span className="text-[#15803D] font-medium">Active (Meta Graph v21.0)</span>
+                          isExpiringSoon ? (
+                            <span className="text-[#D97706] font-medium">Expiring Soon (Meta token refresh recommended)</span>
+                          ) : (
+                            <span className="text-[#15803D] font-medium">Active (Meta Graph v21.0)</span>
+                          )
                         ) : (
-                          <span className="text-[#DC2626] font-medium">Inactive (Reconnect required)</span>
+                          <span className="text-[#DC2626] font-medium">Inactive (Meta authorization expired or revoked)</span>
                         )}
                       </div>
                     </div>
@@ -283,10 +296,11 @@ export default function InstagramAccountsPage() {
                     {!isActive && (
                       <button
                         type="button"
-                        onClick={handleStartConnect}
-                        className="text-xs bg-[#062E1A] hover:bg-[#0A4A2A] text-white font-semibold px-3.5 py-1.5 rounded-lg shadow-2xs transition-colors cursor-pointer"
+                        onClick={handleAuthorizeMeta}
+                        className="inline-flex items-center gap-1.5 text-xs bg-[#062E1A] hover:bg-[#0A4A2A] text-white font-semibold px-3.5 py-1.5 rounded-lg shadow-2xs transition-colors cursor-pointer"
                       >
-                        Reconnect
+                        <Instagram size={13} />
+                        <span>Reconnect</span>
                       </button>
                     )}
                     <button

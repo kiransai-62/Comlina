@@ -35,6 +35,7 @@ class InstagramAccountOut(BaseModel):
     token_expires_at: Optional[datetime] = None
     is_active: bool
     connected_at: datetime
+    status: Optional[str] = "CONNECTED"
 
 class ConnectAccountRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=1024)

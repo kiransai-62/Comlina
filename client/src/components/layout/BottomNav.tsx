@@ -39,6 +39,11 @@ export function BottomNav() {
     pathname.startsWith(p)
   );
 
+  // Suppress BottomNav on full-screen builder studio to prevent colliding/stacked action bars
+  if (pathname.startsWith('/dashboard/automations/create')) {
+    return null;
+  }
+
   return (
     <>
       {/* "More" Slide-up Sheet */}

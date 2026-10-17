@@ -16,7 +16,7 @@ import {
   Plus,
   Image as ImageIcon
 } from 'lucide-react';
-import { SAMPLE_INSTAGRAM_POSTS, InstagramMediaItem } from './PostSelector';
+import { InstagramMediaItem } from './PostSelector';
 import { instagramApi } from '@/features/instagram/api';
 import { FlowActionButtons } from './FlowActionButtons';
 
@@ -38,7 +38,7 @@ export function CommentReplyFlow({
   // 1. Post Selection State
   const [selectedPostId, setSelectedPostId] = useState<string>('all');
   const [showAllPosts, setShowAllPosts] = useState(false);
-  const [posts, setPosts] = useState<InstagramMediaItem[]>(SAMPLE_INSTAGRAM_POSTS);
+  const [posts, setPosts] = useState<InstagramMediaItem[]>([]);
 
   useEffect(() => {
     let mounted = true;

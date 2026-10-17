@@ -17,6 +17,25 @@ export class ApiError extends Error {
 
 class ApiClient {
   private activeWorkspaceId: string | null = null;
+  private isRefreshing = false;
+  private refreshSubscribers: ((token: string | null) => void)[] = [];
+
+  constructor() {
+    // Restore active workspace ID from localStorage on initialization
+    if (typeof window !== 'undefined') {
+      try {
+        const storedWs = localStorage.getItem('comlina_workspace');
+        if (storedWs) {
+          const ws = JSON.parse(storedWs);
+          if (ws?.id) {
+            this.activeWorkspaceId = ws.id;
+          }
+        }
+      } catch {
+        // ignore
+      }
+    }
+  }
 
   setWorkspaceId(workspaceId: string | null) {
     this.activeWorkspaceId = workspaceId;
@@ -24,6 +43,15 @@ class ApiClient {
 
   getWorkspaceId(): string | null {
     return this.activeWorkspaceId;
+  }
+
+  private subscribeTokenRefresh(cb: (token: string | null) => void) {
+    this.refreshSubscribers.push(cb);
+  }
+
+  private onTokenRefreshed(token: string | null) {
+    this.refreshSubscribers.forEach((cb) => cb(token));
+    this.refreshSubscribers = [];
   }
 
   async request<T>(endpoint: string, options: RequestInit = {}): Promise<T> {
@@ -60,34 +88,71 @@ class ApiClient {
 
       if (!response.ok) {
         if (AUTH_ENABLED && response.status === 401 && typeof window !== 'undefined') {
-          // If request was not already a retry, attempt an automatic seamless token refresh
-          if (!(options as any)._isRetry) {
-            try {
-              const refreshedToken = await authService.refreshToken();
-              if (refreshedToken) {
-                return await this.request<T>(endpoint, {
-                  ...options,
-                  _isRetry: true,
-                  headers: {
-                    ...((options.headers as Record<string, string>) || {}),
-                    Authorization: `Bearer ${refreshedToken}`,
-                  },
-                } as RequestInit);
-              }
-            } catch {
-              // fall through to sign out
-            }
-          }
-
-          // If token refresh failed or token is genuinely invalid, clear stale state and redirect
-          try {
+          // If request was already retried once with a refreshed token, give up and sign out
+          if ((options as any)._isRetry) {
             const pathname = window.location.pathname;
             if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
               await authService.signOut();
               return null as unknown as T;
             }
+          }
+
+          // Concurrency control: if a refresh is already underway, queue this request
+          if (this.isRefreshing) {
+            return new Promise<T>((resolve, reject) => {
+              this.subscribeTokenRefresh(async (newToken) => {
+                if (newToken) {
+                  try {
+                    const retried = await this.request<T>(endpoint, {
+                      ...options,
+                      _isRetry: true,
+                      headers: {
+                        ...((options.headers as Record<string, string>) || {}),
+                        Authorization: `Bearer ${newToken}`,
+                      },
+                    } as RequestInit);
+                    resolve(retried);
+                  } catch (err) {
+                    reject(err);
+                  }
+                } else {
+                  reject(new ApiError('Session expired. Please sign in again.', 401));
+                }
+              });
+            });
+          }
+
+          // Otherwise, start the singleton refresh attempt
+          this.isRefreshing = true;
+          try {
+            const refreshedToken = await authService.refreshToken();
+            this.onTokenRefreshed(refreshedToken);
+
+            if (refreshedToken) {
+              return await this.request<T>(endpoint, {
+                ...options,
+                _isRetry: true,
+                headers: {
+                  ...((options.headers as Record<string, string>) || {}),
+                  Authorization: `Bearer ${refreshedToken}`,
+                },
+              } as RequestInit);
+            } else {
+              const pathname = window.location.pathname;
+              if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
+                await authService.signOut();
+                return null as unknown as T;
+              }
+            }
           } catch {
-            // ignore
+            this.onTokenRefreshed(null);
+            const pathname = window.location.pathname;
+            if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
+              await authService.signOut();
+              return null as unknown as T;
+            }
+          } finally {
+            this.isRefreshing = false;
           }
         }
         let errorDetails: any = null;

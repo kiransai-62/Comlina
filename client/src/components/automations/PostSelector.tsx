@@ -17,58 +17,49 @@ export interface InstagramMediaItem {
 
 export const SAMPLE_INSTAGRAM_POSTS: InstagramMediaItem[] = [
   {
-    id: 'media_1',
-    type: 'REEL',
-    caption: 'Comment "GUIDE" and I\'ll DM you our full 2026 organic Instagram growth playbook 🔥',
-    imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 142,
-    likesCount: 1890,
-    publishedDate: 'Yesterday',
-  },
-  {
-    id: 'media_2',
+    id: 'media_summer',
     type: 'POST',
-    caption: 'The 3-part framework that scaled our inbound leads from comments to 7-figures 📈',
-    imageUrl: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 89,
-    likesCount: 934,
-    publishedDate: '3 days ago',
+    caption: 'Summer Collection',
+    imageUrl: 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=500&auto=format&fit=crop&q=80',
+    commentsCount: 84,
+    likesCount: 1200,
+    publishedDate: 'Aug 12, 2024',
   },
   {
-    id: 'media_3',
+    id: 'media_sneakers',
     type: 'POST',
-    caption: 'Want the exact template we use to close deals directly in DMs? Drop "PRICE" below! 👇',
-    imageUrl: 'https://images.unsplash.com/photo-1542744094-3a31f272c490?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 312,
-    likesCount: 3410,
-    publishedDate: '5 days ago',
+    caption: 'Streetwear Footwear Drop',
+    imageUrl: 'https://images.unsplash.com/photo-1552346154-21d32810aba3?w=500&auto=format&fit=crop&q=80',
+    commentsCount: 160,
+    likesCount: 2450,
+    publishedDate: 'Aug 10, 2024',
   },
   {
-    id: 'media_4',
+    id: 'media_beach',
     type: 'REEL',
-    caption: 'Behind the scenes: Automating customer inquiries 24/7 without sounding like a robot 🤖',
-    imageUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 64,
+    caption: 'Sunset Beach Golden Hour',
+    imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&auto=format&fit=crop&q=80',
+    commentsCount: 290,
+    likesCount: 3100,
+    publishedDate: 'Aug 08, 2024',
+  },
+  {
+    id: 'media_desk',
+    type: 'POST',
+    caption: 'Minimal Workspace Setup',
+    imageUrl: 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=500&auto=format&fit=crop&q=80',
+    commentsCount: 52,
+    likesCount: 940,
+    publishedDate: 'Aug 05, 2024',
+  },
+  {
+    id: 'media_plant',
+    type: 'POST',
+    caption: 'Indoor Botanical Greenery',
+    imageUrl: 'https://images.unsplash.com/photo-1485955900006-10f4d324d411?w=500&auto=format&fit=crop&q=80',
+    commentsCount: 39,
     likesCount: 820,
-    publishedDate: '1 week ago',
-  },
-  {
-    id: 'media_5',
-    type: 'POST',
-    caption: 'Swipe to see how top creator brands turn comments into high-ticket email subscribers ➡️',
-    imageUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 118,
-    likesCount: 1420,
-    publishedDate: '1 week ago',
-  },
-  {
-    id: 'media_6',
-    type: 'REEL',
-    caption: 'Never lose another hot lead in your Instagram notifications. Say "LINK" to test! 🚀',
-    imageUrl: 'https://images.unsplash.com/photo-1551288049-bebda4e38f71?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 205,
-    likesCount: 2650,
-    publishedDate: '2 weeks ago',
+    publishedDate: 'Aug 01, 2024',
   },
 ];
 
@@ -120,11 +111,11 @@ export function PostSelector({
         if (data && data.length > 0) {
           setInternalPosts(data as InstagramMediaItem[]);
         } else {
-          setInternalPosts(SAMPLE_INSTAGRAM_POSTS);
+          setInternalPosts([]);
         }
       })
       .catch(() => {
-        if (mounted) setInternalPosts(SAMPLE_INSTAGRAM_POSTS);
+        if (mounted) setInternalPosts([]);
       })
       .finally(() => {
         if (mounted) setInternalLoading(false);
@@ -134,7 +125,7 @@ export function PostSelector({
 
   const posts = (externalPosts && externalPosts.length > 0)
     ? externalPosts
-    : (internalPosts.length > 0 ? internalPosts : SAMPLE_INSTAGRAM_POSTS);
+    : internalPosts;
   const isLoading = externalLoading || (internalLoading && (!externalPosts || externalPosts.length === 0));
 
   // Skeletons in the exact same grid

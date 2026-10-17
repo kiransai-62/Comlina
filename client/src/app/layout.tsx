@@ -1,9 +1,16 @@
 import '@/styles/globals.css';
 import type { Metadata } from 'next';
+import { PwaInstallPrompt } from '@/features/pwa/PwaInstallPrompt';
 
 export const metadata: Metadata = {
   title: 'Comlina — Turn Conversations into Growth',
   description: 'Turn Conversations into Growth. Turn comments, story replies, and mentions into qualified leads and sales with Instagram automation.',
+  manifest: '/manifest.json',
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: 'default',
+    title: 'Comlina',
+  },
   icons: {
     icon: [
       { url: '/favicon.ico' },
@@ -25,7 +32,7 @@ export const viewport = {
   width: 'device-width',
   initialScale: 1,
   viewportFit: 'cover' as const,
-  themeColor: '#FAFAF8',
+  themeColor: '#064125',
 };
 
 export default function RootLayout({
@@ -37,6 +44,7 @@ export default function RootLayout({
     <html lang="en">
       <body className="bg-[#FAFAF8] min-h-screen text-[#333330] antialiased">
         {children}
+        <PwaInstallPrompt />
       </body>
     </html>
   );

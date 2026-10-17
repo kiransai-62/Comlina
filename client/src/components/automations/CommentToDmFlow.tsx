@@ -1,56 +1,43 @@
 // client/src/components/automations/CommentToDmFlow.tsx
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { 
   ArrowLeft, 
   RefreshCw, 
-  Sparkles, 
-  MessageSquare, 
-  Send, 
-  Repeat, 
-  UserPlus, 
-  Link2, 
-  Clock, 
-  Plus, 
   X, 
-  Trash2, 
   Check, 
-  Save, 
-  HelpCircle,
-  ExternalLink,
-  Bot,
-  Calendar,
-  Radio,
-  Lock,
-  ArrowUpRight
+  ChevronLeft, 
+  ChevronRight, 
+  ChevronDown, 
+  ChevronUp, 
+  Smile, 
+  Image as ImageIcon, 
+  Link2, 
+  MessageSquare, 
+  Clock, 
+  Repeat, 
+  Send, 
+  Bookmark,
+  Sparkles,
+  AlertCircle,
+  ExternalLink
 } from 'lucide-react';
-import { SAMPLE_INSTAGRAM_POSTS, InstagramMediaItem } from './PostSelector';
+import { InstagramMediaItem } from './PostSelector';
 import { instagramApi } from '@/features/instagram/api';
-import { FlowActionButtons } from './FlowActionButtons';
-import { FeatureGate } from '@/components/billing/FeatureGate';
-import { PlanBadge } from '@/components/billing/PlanBadge';
-import { UpgradeModal } from '@/components/billing/UpgradeModal';
+import { useInstagramConnection } from '@/features/instagram';
+import { ConnectedInstagramAccount } from '@/features/instagram/types';
+import { InstagramPhonePreview } from './InstagramPhonePreview';
 import { usePlan } from '@/hooks/usePlan';
-
-export interface DMButton {
-  id: string;
-  label: string;
-  url: string;
-}
-
-export interface FollowUpItem {
-  id: string;
-  hours: number;
-  minutes: number;
-  seconds: number;
-  message: string;
-}
+import { useUIStore } from '@/stores/uiStore';
 
 interface CommentToDmFlowProps {
   onBack: () => void;
   onSave: (flowData: any) => Promise<void>;
   accountName?: string;
+  accountId?: string;
+  accounts?: ConnectedInstagramAccount[];
+  onSelectAccount?: (account: ConnectedInstagramAccount) => void;
   isSaving?: boolean;
   onPreviewChange?: (previewData: any) => void;
 }
@@ -58,1095 +45,1306 @@ interface CommentToDmFlowProps {
 export function CommentToDmFlow({
   onBack,
   onSave,
-  accountName = 'yourbrand',
+  accountName = '',
+  accountId,
+  accounts: externalAccounts,
+  onSelectAccount,
   isSaving = false,
   onPreviewChange,
 }: CommentToDmFlowProps) {
-  const { planTier, isLocked, usage, fetchUsage, openUpgradeModal } = usePlan();
+  const { isLocked, openUpgradeModal } = usePlan();
+  const showToast = useUIStore((s) => s.showToast);
 
-  useEffect(() => {
-    fetchUsage();
-  }, []);
+  // ══════════════════════════════════════════════════════════════
+  // DYNAMIC CONNECTED INSTAGRAM ACCOUNTS
+  // ══════════════════════════════════════════════════════════════
+  const {
+    accounts: hookAccounts = [],
+    isLoading: isCheckingAccounts,
+    startConnect,
+  } = useInstagramConnection();
 
-  // 1. Post Selection State
-  const [selectedPostId, setSelectedPostId] = useState<string>('all');
-  const [isScanning, setIsScanning] = useState(false);
-  const [posts, setPosts] = useState<InstagramMediaItem[]>(SAMPLE_INSTAGRAM_POSTS);
+  const allAccounts: ConnectedInstagramAccount[] =
+    externalAccounts && externalAccounts.length > 0 ? externalAccounts : hookAccounts;
 
-  useEffect(() => {
-    let mounted = true;
-    instagramApi.getMedia()
-      .then((data) => {
-        if (mounted && data && data.length > 0) {
-          setPosts(data as InstagramMediaItem[]);
-        }
-      })
-      .catch(() => {});
-    return () => { mounted = false; };
-  }, []);
-
-  // 2. Reply to All State
-  const [replyToAll, setReplyToAll] = useState(false);
-
-  // 3. Trigger Keywords State
-  const [keywordInput, setKeywordInput] = useState('');
-  const [keywords, setKeywords] = useState<string[]>(['PRICE', 'LINK', 'INFO']);
-
-  // 4. Ask to Follow State (PREMIUM)
-  const [askFollowEnabled, setAskFollowEnabled] = useState(false);
-  const [askFollowMessage, setAskFollowMessage] = useState(
-    `Hey! 👋 Please follow @${accountName} first to receive this content.\n\nTap the follow button below, then send any message here and we'll check instantly and send your content. 🙏`
+  const [selectedAccountId, setSelectedAccountId] = useState<string>(
+    accountId || allAccounts[0]?.id || ''
   );
-  const [retryMessage, setRetryMessage] = useState('');
-  const [successMessage, setSuccessMessage] = useState('');
-  const [followButtonLabel, setFollowButtonLabel] = useState('');
 
-  // 5. Comment Teaser Reply State (PREMIUM)
-  const [teaserEnabled, setTeaserEnabled] = useState(false);
-  const [teaserMessage, setTeaserMessage] = useState('Check your DM! 📩');
+  // Sync selected account when accounts load if not explicitly set
+  useEffect(() => {
+    if (!selectedAccountId && allAccounts.length > 0) {
+      setSelectedAccountId(allAccounts[0].id);
+    }
+  }, [allAccounts, selectedAccountId]);
 
-  // 6. Trigger Response DM State
-  const [responseDm, setResponseDm] = useState("Hey! 👋 Here's what you asked for:\nhttps://comlina.com/playbook");
+  // Sync if parent updates accountId prop
+  useEffect(() => {
+    if (accountId && accountId !== selectedAccountId) {
+      setSelectedAccountId(accountId);
+    }
+  }, [accountId, selectedAccountId]);
 
-  // 7. DM Buttons State
-  const [buttons, setButtons] = useState<DMButton[]>([
-    { id: 'btn_1', label: 'View the guide', url: 'https://comlina.com/playbook' }
-  ]);
-  const [showAddButton, setShowAddButton] = useState(false);
-  const [newButtonLabel, setNewButtonLabel] = useState('');
-  const [newButtonUrl, setNewButtonUrl] = useState('');
+  const selectedAccount = allAccounts.find((a) => a.id === selectedAccountId) || allAccounts[0] || null;
+  const activeAccountName = selectedAccount?.username || accountName || '';
+  const activeAvatarUrl = selectedAccount?.profile_pic_url || null;
 
-  // 8. Follow-up DMs State (PREMIUM)
-  const [followUpEnabled, setFollowUpEnabled] = useState(false);
-  const [followUps, setFollowUps] = useState<FollowUpItem[]>([
-    {
-      id: 'fu_1',
-      hours: 2,
-      minutes: 0,
-      seconds: 0,
-      message: 'Hey! Just checking in — did you get a chance to look at what I sent?',
-    },
-    {
-      id: 'fu_2',
-      hours: 12,
-      minutes: 0,
-      seconds: 0,
-      message: 'Hey! Just checking in — did you get a chance to look at what I sent?',
-    },
-  ]);
-  const [aiPrompt, setAiPrompt] = useState('');
-  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
-  const [stopKeywords, setStopKeywords] = useState('stop, unsubscribe, cancel, no thanks');
-  const [stopDetails, setStopDetails] = useState<string[]>(['Phone number', 'Email address']);
-  const [otherDetails, setOtherDetails] = useState('');
+  // ══════════════════════════════════════════════════════════════
+  // REAL POSTS MANAGEMENT (ACCOUNT ISOLATED — NO HARDCODED FIXTURES)
+  // ══════════════════════════════════════════════════════════════
+  const [postMode, setPostMode] = useState<'specific' | 'all'>('specific');
+  const [posts, setPosts] = useState<InstagramMediaItem[]>([]);
+  const [selectedPostId, setSelectedPostId] = useState<string>('');
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
+  const [postError, setPostError] = useState<string | null>(null);
+  const carouselRef = useRef<HTMLDivElement>(null);
 
-  // Pro Features State
-  const [liveCommentEnabled, setLiveCommentEnabled] = useState(false);
-  const [aiAssistantEnabled, setAiAssistantEnabled] = useState(false);
-  const [appointmentBookingEnabled, setAppointmentBookingEnabled] = useState(false);
-
-  // Synchronize Live Preview Setup
-  React.useEffect(() => {
-    onPreviewChange?.({
-      keywords,
-      publicReplyEnabled: teaserEnabled,
-      publicReplyText: teaserMessage,
-      openingDmEnabled: true,
-      openingDmText: responseDm,
-      openingDmButtonText: buttons[0]?.label || 'View the guide',
-      deliveryLinkUrl: buttons[0]?.url || '',
-      deliveryLinkButtonText: buttons[0]?.label || 'View the guide',
-      deliveryText: responseDm,
-      askFollowEnabled,
-      askFollowText: askFollowMessage,
-      followupEnabled: followUpEnabled && followUps.length > 0,
-      followupHours: followUps[0]?.hours || 2,
-      followupText: followUps[0]?.message || '',
-      defaultTab: 'dm',
-      isStoryFlow: false,
-    });
-  }, [
-    keywords,
-    teaserEnabled,
-    teaserMessage,
-    responseDm,
-    buttons,
-    askFollowEnabled,
-    askFollowMessage,
-    followUpEnabled,
-    followUps,
-    onPreviewChange,
-  ]);
-
-  // Handlers
-  const handleAddKeyword = () => {
-    const trimmed = keywordInput.trim().toUpperCase();
-    if (!trimmed) return;
-    if (keywords.includes(trimmed)) {
-      setKeywordInput('');
+  const loadPostsForAccount = useCallback(async (targetAccountId?: string) => {
+    if (!targetAccountId) {
+      setPosts([]);
+      setSelectedPostId('');
       return;
     }
+
+    setIsLoadingPosts(true);
+    setPostError(null);
+    try {
+      const data = await instagramApi.getMedia(targetAccountId);
+      if (data && data.length > 0) {
+        setPosts(data as InstagramMediaItem[]);
+        setSelectedPostId((curr) => {
+          const exists = data.some((p) => p.id === curr);
+          return exists ? curr : data[0].id;
+        });
+      } else {
+        setPosts([]);
+        setSelectedPostId('');
+      }
+    } catch (err: any) {
+      console.warn('Could not fetch real posts for Instagram account:', err);
+      setPosts([]);
+      setSelectedPostId('');
+      setPostError(err.message || 'Unable to fetch posts. Reauthorization may be required.');
+    } finally {
+      setIsLoadingPosts(false);
+    }
+  }, []);
+
+  // Re-fetch media whenever selectedAccountId changes
+  useEffect(() => {
+    if (selectedAccountId) {
+      loadPostsForAccount(selectedAccountId);
+    } else {
+      setPosts([]);
+      setSelectedPostId('');
+    }
+  }, [selectedAccountId, loadPostsForAccount]);
+
+  const handleRefreshPosts = async () => {
+    if (!selectedAccountId) {
+      showToast('Please connect an Instagram account first.');
+      return;
+    }
+    await loadPostsForAccount(selectedAccountId);
+    showToast('Instagram posts refreshed.');
+  };
+
+  const handleAccountSwitch = (newAccId: string) => {
+    setSelectedAccountId(newAccId);
+    const chosen = allAccounts.find((a) => a.id === newAccId);
+    if (chosen && onSelectAccount) {
+      onSelectAccount(chosen);
+    }
+  };
+
+  const handleScrollCarousel = (direction: 'left' | 'right') => {
+    if (carouselRef.current) {
+      const scrollAmount = direction === 'left' ? -220 : 220;
+      carouselRef.current.scrollBy({ left: scrollAmount, behavior: 'smooth' });
+    }
+  };
+
+  // ══════════════════════════════════════════════════════════════
+  // CONFIGURATION FORM STATE (7 INPUT DESCRIPTIONS)
+  // ══════════════════════════════════════════════════════════════
+
+  // 2. Ask to Follow State (Premium)
+  const [askFollowEnabled, setAskFollowEnabled] = useState(false);
+  const [askFollowMessage, setAskFollowMessage] = useState(
+    'Please follow our account to get the guide!'
+  );
+
+  // 3. Trigger Keywords State
+  const [keywords, setKeywords] = useState<string[]>(['PRICE', 'LINK', 'INFO']);
+  const [keywordInput, setKeywordInput] = useState('');
+  const [matchWholeWords, setMatchWholeWords] = useState(true);
+
+  const handleAddKeyword = () => {
+    const clean = keywordInput.trim().toUpperCase();
+    if (!clean) return;
+
     if (keywords.length >= 3 && isLocked('expanded_keywords')) {
       openUpgradeModal('PREMIUM', 'expanded_keywords');
       return;
     }
-    setKeywords([...keywords, trimmed]);
+
+    if (!keywords.includes(clean)) {
+      setKeywords([...keywords, clean]);
+    }
     setKeywordInput('');
   };
 
-  const handleKeywordKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' || e.key === ',') {
+  const handleRemoveKeyword = (kw: string) => {
+    setKeywords(keywords.filter((k) => k !== kw));
+  };
+
+  const handleKeywordKeyDown = (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter') {
       e.preventDefault();
       handleAddKeyword();
     }
   };
 
-  const handleRemoveKeyword = (kwToRemove: string) => {
-    setKeywords(keywords.filter((kw) => kw !== kwToRemove));
+  // 4. Automated DM Message State
+  const [responseDm, setResponseDm] = useState(
+    "Hey! 👋 Here's the resource you requested:"
+  );
+
+  // 5. DM Buttons State
+  const [buttonLabel, setButtonLabel] = useState('View the guide');
+  const [destinationUrl, setDestinationUrl] = useState('https://example.com/guide');
+
+  // 6. Advanced Settings State
+  const [matchBehavior, setMatchBehavior] = useState<'exact' | 'contains'>('contains');
+  const [teaserEnabled, setTeaserEnabled] = useState(false);
+  const [teaserMessage, setTeaserMessage] = useState('Check your DM! 📩');
+  const [followUpEnabled, setFollowUpEnabled] = useState(false);
+  const [followUpHours, setFollowUpHours] = useState(2);
+  const [followUpMessage, setFollowUpMessage] = useState(
+    'Hey! Just checking in — did you get a chance to look at what I sent? 😊'
+  );
+  const [replyToAll, setReplyToAll] = useState(false);
+
+  // Accordion Expand/Collapse for Additional Options
+  const [expandedCards, setExpandedCards] = useState({
+    teaser: false,
+    followUp: false,
+  });
+
+  const allExpanded = Object.values(expandedCards).every(Boolean);
+
+  const toggleAllCards = () => {
+    const nextState = !allExpanded;
+    setExpandedCards({
+      teaser: nextState,
+      followUp: nextState,
+    });
   };
 
-  const handleAddDMButton = () => {
-    if (!newButtonLabel.trim()) return;
-    setButtons([
-      ...buttons,
-      {
-        id: `btn_${Date.now()}`,
-        label: newButtonLabel.trim(),
-        url: newButtonUrl.trim() || 'https://comlina.com',
-      },
-    ]);
-    setNewButtonLabel('');
-    setNewButtonUrl('');
-    setShowAddButton(false);
+  const toggleCard = (key: keyof typeof expandedCards) => {
+    setExpandedCards((prev) => ({
+      ...prev,
+      [key]: !prev[key],
+    }));
   };
 
-  const handleRemoveDMButton = (id: string) => {
-    setButtons(buttons.filter((b) => b.id !== id));
-  };
+  // Active Selected Post Object from Real Account Posts
+  const selectedPost = posts.find((p) => p.id === selectedPostId) || (posts.length > 0 ? posts[0] : null);
 
-  const handleAddFollowUp = () => {
-    setFollowUps([
-      ...followUps,
-      {
-        id: `fu_${Date.now()}`,
-        hours: 24,
-        minutes: 0,
-        seconds: 0,
-        message: 'Hey! Just wanted to make sure you got the resource? Let me know if you need anything!',
-      },
-    ]);
-  };
+  // Mobile / Tablet Tab Switcher
+  const [mobileStudioTab, setMobileStudioTab] = useState<'editor' | 'preview'>('editor');
 
-  const handleRemoveFollowUp = (id: string) => {
-    setFollowUps(followUps.filter((fu) => fu.id !== id));
-  };
+  // Sync to Parent or External listeners
+  useEffect(() => {
+    onPreviewChange?.({
+      keywords,
+      selectedPost: postMode === 'specific' ? selectedPost : null,
+      deliveryText: responseDm,
+      deliveryLinkButtonText: buttonLabel,
+      deliveryLinkUrl: destinationUrl,
+      askFollowEnabled,
+      askFollowText: askFollowMessage || 'Follow our Instagram to get more such resources and updates!',
+      publicReplyEnabled: teaserEnabled,
+      publicReplyText: teaserMessage,
+      followupEnabled: followUpEnabled,
+      followupHours: followUpHours,
+      followupText: followUpMessage,
+      matchBehavior,
+      accountName: activeAccountName,
+    });
+  }, [
+    keywords,
+    selectedPost,
+    postMode,
+    responseDm,
+    buttonLabel,
+    destinationUrl,
+    askFollowEnabled,
+    askFollowMessage,
+    teaserEnabled,
+    teaserMessage,
+    followUpEnabled,
+    followUpHours,
+    followUpMessage,
+    matchBehavior,
+    activeAccountName,
+    onPreviewChange,
+  ]);
 
-  const handleToggleStopDetail = (detail: string) => {
-    if (stopDetails.includes(detail)) {
-      setStopDetails(stopDetails.filter((d) => d !== detail));
-    } else {
-      setStopDetails([...stopDetails, detail]);
+  // Form Validation
+  const isFormValid =
+    !!selectedAccount &&
+    (replyToAll || keywords.length > 0) &&
+    !!responseDm.trim() &&
+    !!buttonLabel.trim() &&
+    !!destinationUrl.trim() &&
+    (destinationUrl.startsWith('http://') || destinationUrl.startsWith('https://'));
+
+  const handleSaveClick = async (status: 'DRAFT' | 'ACTIVE') => {
+    if (!selectedAccount) {
+      showToast('Please connect an Instagram account first.');
+      return;
     }
-  };
 
-  const handleRescan = () => {
-    setIsScanning(true);
-    setTimeout(() => {
-      setIsScanning(false);
-    }, 800);
-  };
+    if (!isFormValid) {
+      showToast('Please fill in required fields (including valid HTTPS URL) before publishing.');
+      return;
+    }
 
-  const handleSaveClick = async (status: 'DRAFT' | 'ACTIVE' = 'ACTIVE') => {
     const payload = {
-      type: 'COMMENT_TO_DM',
       status,
-      selectedPostId,
-      replyToAll,
-      keywords: replyToAll ? [] : keywords,
-      askFollow: {
-        enabled: askFollowEnabled,
-        message: askFollowMessage,
-        retryMessage,
-        successMessage,
-        buttonLabel: followButtonLabel,
+      name: 'Comment to DM Flow',
+      instagram_account_id: selectedAccount.id,
+      trigger: {
+        type: 'COMMENT',
+        mode: postMode,
+        postId: postMode === 'specific' ? selectedPostId : undefined,
+        keywords: replyToAll ? [] : keywords,
+        matchWholeWords,
+        matchBehavior,
+        replyToAll,
       },
-      teaserReply: {
-        enabled: teaserEnabled,
-        message: teaserMessage,
-      },
-      responseDm: {
+      automatedDm: {
         message: responseDm,
-        buttons,
+        button: {
+          label: buttonLabel,
+          url: destinationUrl,
+        },
       },
-      followUp: {
-        enabled: followUpEnabled,
-        items: followUps,
-        aiPrompt,
-        stopKeywords,
-        stopDetails,
-        otherDetails,
+      advanced: {
+        askFollow: {
+          enabled: askFollowEnabled,
+          message: askFollowMessage,
+        },
+        commentTeaser: {
+          enabled: teaserEnabled,
+          message: teaserMessage,
+        },
+        followUp: {
+          enabled: followUpEnabled,
+          hours: followUpHours,
+          message: followUpMessage,
+        },
       },
-      liveCommentEnabled,
-      aiSmartAssistantEnabled: aiAssistantEnabled,
-      appointmentBookingEnabled,
     };
 
     await onSave(payload);
   };
 
-  const isFormValid = (replyToAll || keywords.length > 0) && !!responseDm.trim();
-
-  const availableDetails = ['Phone number', 'Email address', 'Address', 'Name', 'Pick a time slot'];
-
   return (
-    <div className="max-w-4xl mx-auto pb-24 text-[#111110] space-y-6">
-      <UpgradeModal />
-      
-      {/* HEADER */}
-      <div className="flex flex-wrap items-center justify-between gap-3 pb-3 border-b border-[#ECECE8]">
+    <div className="w-full max-w-[1500px] mx-auto pb-16 text-[#111110]">
+      {/* ── TOP WORKFLOW HEADER ── */}
+      <div className="flex items-center justify-between flex-wrap gap-4 mb-6">
         <div className="flex items-center gap-3">
           <button
             type="button"
             onClick={onBack}
-            className="p-2 rounded-xl border border-[#ECECE8] hover:bg-white text-[#70706B] hover:text-[#111110] transition-colors cursor-pointer"
-            title="Back to Automation Selection"
+            className="p-1.5 -ml-1 text-[#70706B] hover:text-[#111110] hover:bg-[#F4F4F0] rounded-xl transition-colors cursor-pointer"
+            title="Back to Automations"
           >
-            <ArrowLeft size={18} />
+            <ArrowLeft size={20} />
           </button>
           <div>
-            <div className="flex items-center gap-2">
-              <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
+            <div className="flex items-center gap-2.5">
+              <h1 className="text-2xl sm:text-3xl font-extrabold text-[#111110] tracking-tight">
                 Comment to DM Flow
               </h1>
-              <PlanBadge tier={planTier} size="xs" />
+              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A]/60">
+                <span className="w-1.5 h-1.5 rounded-full bg-[#D97706]" />
+                DRAFT
+              </span>
             </div>
-            <p className="text-xs text-[#70706B]">
-              Set up automated responses when users comment keywords
+            <p className="text-xs text-[#70706B] mt-1">
+              Set up automated responses when users comment keywords on your Instagram posts.
             </p>
           </div>
         </div>
 
-        <FlowActionButtons
-          isValid={isFormValid}
-          isSaving={isSaving}
-          onSaveDraft={() => handleSaveClick('DRAFT')}
-          onPublish={() => handleSaveClick('ACTIVE')}
-        />
+        {/* Right Action Buttons */}
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => handleSaveClick('DRAFT')}
+            className="inline-flex items-center gap-2 px-4 py-2 bg-white border border-[#E0E0DA] hover:bg-[#F7F7F5] text-[#111110] text-xs font-semibold rounded-xl transition-all shadow-2xs cursor-pointer disabled:opacity-50"
+          >
+            <Bookmark size={14} className="text-[#70706B]" />
+            <span>Save Draft</span>
+          </button>
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => handleSaveClick('ACTIVE')}
+            className="inline-flex items-center gap-2 px-4.5 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer disabled:opacity-50"
+          >
+            <Send size={14} />
+            <span>Publish Automation</span>
+          </button>
+        </div>
       </div>
 
-      {/* Post Quota Limit Banner for Free Plan */}
-      {usage?.is_post_quota_reached && planTier === 'FREE' && (
-        <div className="p-4 bg-amber-50 border border-amber-200 rounded-2xl flex flex-wrap items-center justify-between gap-3 shadow-xs">
-          <div className="flex items-center gap-2.5">
-            <div className="p-2 bg-amber-100 text-amber-800 rounded-xl">
-              <Lock size={16} />
+      {/* ── REAL CONNECTED INSTAGRAM ACCOUNT CARD & ACCOUNT SWITCHER ── */}
+      {isCheckingAccounts ? (
+        <div className="mb-6 bg-white border border-[#ECECE8] rounded-2xl p-4 animate-pulse flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-gray-200" />
+          <div className="space-y-1.5 flex-1">
+            <div className="w-32 h-4 bg-gray-200 rounded" />
+            <div className="w-48 h-3 bg-gray-100 rounded" />
+          </div>
+        </div>
+      ) : allAccounts.length === 0 ? (
+        <div className="mb-6 bg-[#FFFBEB] border border-[#FDE68A] rounded-2xl p-4.5 flex items-center justify-between flex-wrap gap-4 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-[#FEF3C7] text-[#D97706] flex items-center justify-center shrink-0">
+              <AlertCircle size={22} />
             </div>
             <div>
-              <div className="text-xs font-bold text-amber-900 flex items-center gap-1.5">
-                <span>Free Plan Limit Reached: 10/10 Posts Automated</span>
+              <div className="text-sm font-bold text-[#92400E]">
+                No Instagram Account Connected
               </div>
-              <p className="text-[11px] text-amber-800 mt-0.5">
-                You have reached the Free tier quota. Upgrade to Premium (100 posts) or Pro (unlimited) to automate new posts.
+              <p className="text-xs text-[#B45309] mt-0.5">
+                Connect your Instagram Professional or Creator account to load real posts and run automations.
               </p>
             </div>
           </div>
           <button
             type="button"
-            onClick={() => openUpgradeModal('PREMIUM')}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl text-xs font-bold bg-amber-600 hover:bg-amber-700 text-white shadow-xs transition-colors cursor-pointer"
+            onClick={startConnect}
+            className="px-4 py-2 bg-[#D97706] hover:bg-[#B45309] text-white text-xs font-semibold rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer"
           >
-            <span>Upgrade to Premium</span>
-            <ArrowUpRight size={13} />
+            <ExternalLink size={14} />
+            <span>Connect Instagram</span>
           </button>
+        </div>
+      ) : (
+        <div className="mb-6 bg-white border border-[#ECECE8] rounded-2xl p-4 shadow-2xs flex items-center justify-between flex-wrap gap-4">
+          <div className="flex items-center gap-3.5">
+            {/* Account Profile Avatar */}
+            <div className="relative shrink-0">
+              {activeAvatarUrl ? (
+                <img
+                  src={activeAvatarUrl}
+                  alt={activeAccountName}
+                  className="w-11 h-11 rounded-full object-cover border-2 border-white shadow-2xs"
+                />
+              ) : (
+                <div className="w-11 h-11 rounded-full bg-gradient-to-tr from-[#f09433] via-[#dc2743] to-[#bc1888] flex items-center justify-center text-white font-bold text-sm uppercase shadow-2xs">
+                  {activeAccountName ? activeAccountName.charAt(0) : 'IG'}
+                </div>
+              )}
+              <span className="absolute -bottom-0.5 -right-0.5 w-3.5 h-3.5 rounded-full bg-[#22C55E] border-2 border-white" />
+            </div>
+
+            {/* Account Details */}
+            <div>
+              <div className="flex items-center gap-2 flex-wrap">
+                <span className="text-sm font-extrabold text-[#111110]">
+                  @{activeAccountName}
+                </span>
+                {selectedAccount?.status === 'CONNECTED' ? (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#15803D] bg-[#DCFCE7] border border-[#BBF7D0] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    Connected
+                  </span>
+                ) : (
+                  <span className="inline-flex items-center gap-1 text-[10px] font-bold text-[#D97706] bg-[#FEF3C7] border border-[#FDE68A] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                    {selectedAccount?.status || 'Active'}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2 text-xs text-[#70706B] mt-0.5 flex-wrap">
+                <span>Account ID: <span className="font-mono text-[11px] text-[#111110]">{selectedAccount?.id?.slice(0, 8)}...</span></span>
+                {selectedAccount?.account_type && (
+                  <>
+                    <span>•</span>
+                    <span className="capitalize">{selectedAccount.account_type.toLowerCase()} account</span>
+                  </>
+                )}
+                {typeof selectedAccount?.follower_count === 'number' && (
+                  <>
+                    <span>•</span>
+                    <span>{selectedAccount.follower_count.toLocaleString()} followers</span>
+                  </>
+                )}
+              </div>
+            </div>
+          </div>
+
+          {/* Account Selector (When user has multiple accounts connected) */}
+          {allAccounts.length > 1 && (
+            <div className="flex items-center gap-2">
+              <label htmlFor="account-selector" className="text-xs font-semibold text-[#70706B]">
+                Switch account:
+              </label>
+              <select
+                id="account-selector"
+                value={selectedAccountId}
+                onChange={(e) => handleAccountSwitch(e.target.value)}
+                className="px-3 py-1.5 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs font-semibold text-[#111110] outline-none focus:border-[#15803D] shadow-2xs cursor-pointer"
+              >
+                {allAccounts.map((acc) => (
+                  <option key={acc.id} value={acc.id}>
+                    @{acc.username} ({acc.status || 'CONNECTED'})
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
         </div>
       )}
 
-      {/* 1. SELECT POST CARD */}
-      <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <span className="text-[#111110]"><MessageSquare size={16} /></span>
-            <h2 className="text-sm font-bold text-[#111110]">Select Post</h2>
-            {usage && (
-              <span className="text-[11px] text-[#70706B] font-medium">
-                ({usage.posts_used} / {usage.posts_limit === -1 ? 'Unlimited' : usage.posts_limit} posts automated • Max {usage.max_dms_per_post} DMs/post)
-              </span>
-            )}
-          </div>
-          <button
-            type="button"
-            onClick={handleRescan}
-            className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold rounded-lg border border-[#ECECE8] bg-white hover:bg-[#FBFBFA] text-[#70706B] transition-colors cursor-pointer shadow-2xs"
-          >
-            <RefreshCw size={12} className={isScanning ? 'animate-spin' : ''} />
-            <span>Re-scan all</span>
-          </button>
-        </div>
-        <p className="text-xs text-[#70706B] -mt-2">
-          Choose a specific post or apply to all posts.
-        </p>
+      {/* ── TABLET & MOBILE VIEW SWITCHER (< 1200px) ── */}
+      <div className="xl:hidden flex items-center justify-center p-1 bg-[#F4F4F0] border border-[#ECECE8] rounded-2xl mb-5 max-w-sm mx-auto shadow-2xs">
+        <button
+          type="button"
+          onClick={() => setMobileStudioTab('editor')}
+          className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+            mobileStudioTab === 'editor'
+              ? 'bg-white text-[#111110] shadow-xs'
+              : 'text-[#70706B] hover:text-[#111110]'
+          }`}
+        >
+          ✏️ Configure Flow
+        </button>
+        <button
+          type="button"
+          onClick={() => setMobileStudioTab('preview')}
+          className={`flex-1 py-2 px-3 text-xs font-bold rounded-xl transition-all cursor-pointer ${
+            mobileStudioTab === 'preview'
+              ? 'bg-white text-[#064125] shadow-xs'
+              : 'text-[#70706B] hover:text-[#111110]'
+          }`}
+        >
+          📱 Live Simulator
+        </button>
+      </div>
 
-        {/* Post Selection Horizontal Scroller / Grid */}
-        <div className="flex items-center gap-3 overflow-x-auto pb-2 pt-1 scrollbar-thin">
-          {/* Card 1: All Posts */}
-          <div
-            onClick={() => setSelectedPostId('all')}
-            className={`w-32 h-32 rounded-2xl border-2 flex flex-col items-center justify-center p-3 text-center shrink-0 cursor-pointer transition-all ${
-              selectedPostId === 'all'
-                ? 'border-[#0066FF] bg-[#F0F7FF] shadow-xs'
-                : 'border-[#ECECE8] bg-[#FBFBFA] hover:border-gray-300'
-            }`}
-          >
-            <div className="w-8 h-8 rounded-full bg-[#EBF5FF] text-[#0066FF] flex items-center justify-center mb-2">
-              <Sparkles size={16} />
+      {/* ── MAIN STUDIO GRID (2-COLUMN COORDINATED LAYOUT) ── */}
+      <div className="grid grid-cols-1 xl:grid-cols-12 gap-8 items-start">
+        {/* LEFT COLUMN: 6-STEP CONFIGURATION BUILDER */}
+        <div
+          className={`xl:col-span-7 2xl:col-span-7 space-y-6 min-w-0 ${
+            mobileStudioTab === 'preview' ? 'hidden xl:block' : 'block'
+          }`}
+        >
+          {/* ══════════════════════════════════════════════════════════════
+              1. SELECT POST
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                  1
+                </span>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">1. Select Post</h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={handleRefreshPosts}
+                disabled={isLoadingPosts || !selectedAccountId}
+                className="inline-flex items-center gap-1.5 text-xs text-[#70706B] hover:text-[#111110] font-medium cursor-pointer transition-colors disabled:opacity-50"
+              >
+                <RefreshCw size={13} className={isLoadingPosts ? 'animate-spin' : ''} />
+                <span>Refresh</span>
+              </button>
             </div>
-            <span className="text-xs font-bold text-[#111110]">All Posts</span>
-            {selectedPostId === 'all' && (
-              <span className="text-[10px] text-[#0066FF] font-semibold mt-1">Active</span>
-            )}
-          </div>
 
-          {/* Subsequent Post Thumbnails */}
-          {posts.map((post) => {
-            const isSelected = selectedPostId === post.id;
-            return (
-              <div
-                key={post.id}
-                onClick={() => setSelectedPostId(post.id)}
-                className={`w-32 h-32 rounded-2xl border-2 overflow-hidden shrink-0 relative cursor-pointer group transition-all ${
-                  isSelected
-                    ? 'border-[#0066FF] ring-2 ring-[#0066FF]/20 shadow-md'
-                    : 'border-[#ECECE8] hover:border-gray-400'
+            <p className="text-xs text-[#70706B]">
+              Choose which Instagram post will trigger your automation.
+            </p>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-xs font-bold text-[#111110]">
+                Select a post
+              </label>
+              <p className="text-xs text-[#70706B]">
+                Choose a specific post or apply this automation to all eligible posts.
+              </p>
+            </div>
+
+            {/* Pill Tabs: Specific Post | All Posts */}
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => setPostMode('specific')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  postMode === 'specific'
+                    ? 'bg-[#062E1A] text-white shadow-2xs'
+                    : 'bg-transparent text-[#70706B] hover:bg-[#F4F4F0]'
                 }`}
               >
-                <img
-                  src={post.imageUrl}
-                  alt={post.caption}
-                  className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                />
-                <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent p-2 flex flex-col justify-end text-white">
-                  <span className="text-xs font-medium line-clamp-2 leading-tight">
-                    {post.caption}
-                  </span>
+                Specific Post
+              </button>
+              <button
+                type="button"
+                onClick={() => setPostMode('all')}
+                className={`px-3.5 py-1.5 text-xs font-semibold rounded-lg transition-all cursor-pointer ${
+                  postMode === 'all'
+                    ? 'bg-[#062E1A] text-white shadow-2xs'
+                    : 'bg-transparent text-[#70706B] hover:bg-[#F4F4F0]'
+                }`}
+              >
+                All Posts
+              </button>
+            </div>
+
+            {/* Media Content: Loading Skeleton, Error State, Empty State, or Real Carousel */}
+            {postMode === 'specific' ? (
+              isLoadingPosts ? (
+                <div className="flex items-center gap-3.5 overflow-x-auto py-2 scrollbar-none">
+                  {[1, 2, 3].map((i) => (
+                    <div key={i} className="w-28 shrink-0 space-y-2 animate-pulse">
+                      <div className="aspect-square rounded-2xl bg-gray-200" />
+                      <div className="h-3 bg-gray-200 rounded w-3/4" />
+                    </div>
+                  ))}
                 </div>
-                {isSelected && (
-                  <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#0066FF] text-white flex items-center justify-center shadow">
-                    <Check size={12} strokeWidth={3} />
+              ) : postError ? (
+                <div className="p-4 rounded-xl bg-[#FFFBEB] border border-[#FDE68A] text-xs text-[#92400E] space-y-2">
+                  <div className="font-bold flex items-center gap-1.5">
+                    <AlertCircle size={15} className="text-[#D97706]" />
+                    <span>Unable to load posts from Instagram</span>
+                  </div>
+                  <p className="text-[#B45309]">{postError}</p>
+                  <div className="flex items-center gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={handleRefreshPosts}
+                      className="px-3 py-1 bg-white border border-[#D97706] text-[#92400E] font-semibold rounded-lg cursor-pointer"
+                    >
+                      Retry
+                    </button>
+                    <button
+                      type="button"
+                      onClick={startConnect}
+                      className="px-3 py-1 bg-[#D97706] text-white font-semibold rounded-lg cursor-pointer"
+                    >
+                      Reconnect Account
+                    </button>
+                  </div>
+                </div>
+              ) : posts.length === 0 ? (
+                <div className="p-6 rounded-2xl bg-[#FBFBFA] border border-dashed border-[#ECECE8] text-center space-y-2.5">
+                  <div className="w-10 h-10 rounded-xl bg-white border border-[#ECECE8] shadow-2xs flex items-center justify-center text-[#9E9E96] mx-auto">
+                    <ImageIcon size={20} />
+                  </div>
+                  <div className="text-xs font-bold text-[#111110]">
+                    No Instagram posts found for @{activeAccountName || 'this account'}
+                  </div>
+                  <p className="text-[11px] text-[#70706B] max-w-sm mx-auto">
+                    We didn&apos;t find any media published on this Instagram profile. Publish a post or Reel, then click Refresh below.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={handleRefreshPosts}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-white border border-[#ECECE8] hover:bg-[#F4F4F0] text-xs font-semibold rounded-xl shadow-2xs transition-all cursor-pointer"
+                  >
+                    <RefreshCw size={13} />
+                    <span>Refresh Media</span>
+                  </button>
+                </div>
+              ) : (
+                <div className="relative flex items-center pt-1">
+                  {/* Scroll Left Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleScrollCarousel('left')}
+                    className="p-1 rounded-full bg-white border border-[#ECECE8] hover:bg-[#F4F4F0] text-[#70706B] hover:text-[#111110] shadow-xs shrink-0 cursor-pointer z-10 mr-2"
+                    title="Previous posts"
+                  >
+                    <ChevronLeft size={16} />
+                  </button>
+
+                  {/* Posts Carousel Container */}
+                  <div
+                    ref={carouselRef}
+                    className="flex items-start gap-3.5 overflow-x-auto py-2 scrollbar-none flex-1"
+                  >
+                    {posts.map((post) => {
+                      const isSelected = selectedPostId === post.id;
+                      return (
+                        <div
+                          key={post.id}
+                          onClick={() => setSelectedPostId(post.id)}
+                          className={`shrink-0 cursor-pointer group transition-all ${
+                            isSelected ? 'w-36' : 'w-24'
+                          }`}
+                        >
+                          <div
+                            className={`relative aspect-square rounded-2xl overflow-hidden transition-all ${
+                              isSelected
+                                ? 'border-2 border-[#15803D] ring-2 ring-[#15803D]/20 shadow-md'
+                                : 'border border-[#ECECE8] hover:border-gray-400 opacity-80 hover:opacity-100'
+                            }`}
+                          >
+                            <img
+                              src={post.imageUrl}
+                              alt={post.caption || 'Instagram Post'}
+                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                            />
+                            {post.type === 'REEL' && (
+                              <div className="absolute top-2 left-2 w-4 h-4 rounded-full bg-black/60 flex items-center justify-center text-white">
+                                <svg width="8" height="8" viewBox="0 0 24 24" fill="white">
+                                  <path d="M8 5v14l11-7z" />
+                                </svg>
+                              </div>
+                            )}
+                            {isSelected && (
+                              <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-[#15803D] text-white flex items-center justify-center shadow-xs">
+                                <Check size={11} strokeWidth={3} />
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Caption and real metrics under selected post */}
+                          {isSelected && (
+                            <div className="mt-2 text-left">
+                              <div className="text-xs font-bold text-[#111110] truncate">
+                                {post.caption || '(No caption)'}
+                              </div>
+                              <div className="text-[11px] text-[#70706B] mt-0.5">
+                                {post.publishedDate ? `${post.publishedDate} • ` : ''}
+                                {(post.likesCount ? (post.likesCount >= 1000 ? `${(post.likesCount / 1000).toFixed(1)}K` : post.likesCount) : '0')} likes
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
+                  </div>
+
+                  {/* Scroll Right Button */}
+                  <button
+                    type="button"
+                    onClick={() => handleScrollCarousel('right')}
+                    className="p-1 rounded-full bg-white border border-[#ECECE8] hover:bg-[#F4F4F0] text-[#70706B] hover:text-[#111110] shadow-xs shrink-0 cursor-pointer z-10 ml-2"
+                    title="Next posts"
+                  >
+                    <ChevronRight size={16} />
+                  </button>
+                </div>
+              )
+            ) : (
+              <div className="p-4 rounded-xl bg-[#F4FBF6] border border-[#D1EADC] text-xs text-[#064125] flex items-center gap-2.5">
+                <Sparkles size={16} className="text-[#15803D] shrink-0" />
+                <span>
+                  All Posts active: This automation will monitor incoming comments on all existing and future Instagram posts on @{activeAccountName || 'your account'}.
+                </span>
+              </div>
+            )}
+          </section>
+
+          {/* ══════════════════════════════════════════════════════════════
+              2. ASK TO FOLLOW
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5 flex-wrap">
+                <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                  2
+                </span>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">2. Ask to Follow</h2>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-[#FDE68A]/60">
+                  <Sparkles size={11} className="text-[#D97706]" />
+                  Premium
+                </span>
+              </div>
+
+              {/* Toggle Switch */}
+              <button
+                type="button"
+                onClick={() => setAskFollowEnabled(!askFollowEnabled)}
+                className={`w-10 h-5.5 rounded-full transition-colors relative cursor-pointer ${
+                  askFollowEnabled ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                }`}
+                aria-label="Toggle Ask to Follow"
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 rounded-full bg-white shadow-xs transition-transform ${
+                    askFollowEnabled ? 'translate-x-4.5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+
+            <p className="text-xs text-[#70706B]">
+              Prompt users to follow your Instagram account before receiving the resource or continuing the intended flow.
+            </p>
+
+            <div className="p-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs text-[#70706B]">
+              <span className="font-semibold text-[#111110]">Helper text: </span>
+              &ldquo;Encourage users to follow your account before continuing.&rdquo;
+            </div>
+
+            {askFollowEnabled && (
+              <div className="p-4 pt-3 border border-[#D1EADC] bg-[#F4FBF6] rounded-xl space-y-2 transition-all">
+                <label className="block text-xs font-semibold text-[#064125]">
+                  Follow Request Message
+                </label>
+                <p className="text-[11px] text-[#2E7D32]">
+                  Encourage users to follow your account before continuing.
+                </p>
+                <input
+                  type="text"
+                  value={askFollowMessage}
+                  onChange={(e) => setAskFollowMessage(e.target.value)}
+                  placeholder="e.g. Please follow our account to get the guide!"
+                  className="w-full px-3 py-2 bg-white border border-[#A7D7B9] rounded-xl text-xs text-[#111110] outline-none focus:border-[#15803D]"
+                />
+              </div>
+            )}
+          </section>
+
+          {/* ══════════════════════════════════════════════════════════════
+              3. TRIGGER KEYWORDS
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                  3
+                </span>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">3. Trigger Keywords</h2>
+              </div>
+
+              <span className="text-xs font-medium text-[#70706B]">
+                {keywords.length} / 3 keywords
+              </span>
+            </div>
+
+            <p className="text-xs text-[#70706B]">
+              Choose the words that start your automated DM.
+            </p>
+
+            <div className="space-y-1.5 pt-1">
+              <label className="block text-xs font-bold text-[#111110]">
+                Add keywords
+              </label>
+              <p className="text-xs text-[#70706B]">
+                Enter a keyword, then press Enter or tap Add.
+              </p>
+
+              {/* Input Bar */}
+              <div className="flex items-center border border-[#ECECE8] bg-[#FBFBFA] rounded-xl px-3 py-1.5 focus-within:border-[#15803D] focus-within:bg-white transition-all shadow-2xs">
+                <input
+                  type="text"
+                  value={keywordInput}
+                  onChange={(e) => setKeywordInput(e.target.value)}
+                  onKeyDown={handleKeywordKeyDown}
+                  placeholder="e.g. PRICE, LINK, INFO"
+                  className="flex-1 bg-transparent text-xs text-[#111110] placeholder:text-[#9E9E96] outline-none py-1"
+                />
+                <button
+                  type="button"
+                  onClick={handleAddKeyword}
+                  className="text-xs font-bold text-[#111110] hover:text-[#064125] px-2.5 py-1 rounded bg-[#EAEAE5] hover:bg-[#E0E0DA] cursor-pointer transition-colors"
+                >
+                  Add
+                </button>
+              </div>
+            </div>
+
+            {/* Keyword Chips */}
+            <div className="flex flex-wrap items-center gap-2 pt-1">
+              {keywords.map((kw) => (
+                <span
+                  key={kw}
+                  className="inline-flex items-center gap-2 px-3 py-1 bg-[#F4F4F0] hover:bg-[#EAEAE5] text-[#111110] text-xs font-bold tracking-wide uppercase rounded-lg border border-[#ECECE8] transition-colors"
+                >
+                  <span>{kw}</span>
+                  <button
+                    type="button"
+                    onClick={() => handleRemoveKeyword(kw)}
+                    className="text-[#70706B] hover:text-red-600 cursor-pointer"
+                    title={`Remove ${kw}`}
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
+              ))}
+              {keywords.length === 0 && (
+                <span className="text-xs text-amber-700 italic">
+                  No trigger keywords added yet. Add at least one keyword above.
+                </span>
+              )}
+            </div>
+
+            {/* Match Whole Words Only Switch */}
+            <div className="pt-3 border-t border-[#F4F4F0] flex items-center justify-between gap-4">
+              <div>
+                <div className="text-xs font-bold text-[#111110]">
+                  Match whole words only
+                </div>
+                <p className="text-[11px] text-[#70706B] mt-0.5">
+                  When enabled, match complete keywords rather than parts of longer words.
+                </p>
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setMatchWholeWords(!matchWholeWords)}
+                className={`w-10 h-5.5 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                  matchWholeWords ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                }`}
+                aria-label="Toggle Match whole words only"
+              >
+                <span
+                  className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 rounded-full bg-white shadow-xs transition-transform ${
+                    matchWholeWords ? 'translate-x-4.5' : 'translate-x-0'
+                  }`}
+                />
+              </button>
+            </div>
+          </section>
+
+          {/* ══════════════════════════════════════════════════════════════
+              4. AUTOMATED DM MESSAGE
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5">
+              <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                4
+              </span>
+              <h2 className="text-sm sm:text-base font-bold text-[#111110]">4. Automated DM Message</h2>
+            </div>
+
+            <p className="text-xs text-[#70706B]">
+              Write the private message sent when a comment matches your trigger.
+            </p>
+
+            <div className="space-y-1.5 pt-1">
+              <div className="flex items-center justify-between flex-wrap gap-1">
+                <label className="block text-xs font-bold text-[#111110]">
+                  Your message
+                </label>
+                <span className="text-[11px] text-[#70706B]">
+                  Example: Hey! 👋 Here&apos;s the resource you 
+                </span>
+              </div>
+
+              {/* Message Box */}
+              <div className="border border-[#ECECE8] rounded-2xl p-3.5 bg-white focus-within:border-[#15803D] transition-all shadow-2xs">
+                <textarea
+                  rows={4}
+                  value={responseDm}
+                  onChange={(e) => setResponseDm(e.target.value)}
+                  placeholder="Write your automated DM message..."
+                  className="w-full text-xs text-[#111110] placeholder:text-[#9E9E96] outline-none resize-none leading-relaxed bg-transparent"
+                />
+
+                {/* Bottom Toolbar & Character Count */}
+                <div className="flex items-center justify-between pt-2 border-t border-[#F4F4F0] mt-2 flex-wrap gap-2">
+                  <div className="flex items-center gap-2.5 text-[#70706B]">
+                    <button
+                      type="button"
+                      onClick={() => setResponseDm((prev) => `${prev} 😊`)}
+                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
+                      title="Add emoji"
+                    >
+                      <Smile size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
+                      title="Attach image"
+                    >
+                      <ImageIcon size={16} />
+                    </button>
+                    <button
+                      type="button"
+                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
+                      title="Insert link"
+                    >
+                      <Link2 size={16} />
+                    </button>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 text-[11px] text-[#70706B]">
+                    <span>Message length</span>
+                    <span className="font-mono font-semibold text-[#111110]">
+                      {responseDm.length}/1000
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              <p className="text-xs text-[#70706B]">
+                Helper text: Keep your message clear and relevant to the comment.
+              </p>
+            </div>
+          </section>
+
+          {/* ══════════════════════════════════════════════════════════════
+              5. DM BUTTONS
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div className="flex items-center gap-2.5">
+              <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                5
+              </span>
+              <h2 className="text-sm sm:text-base font-bold text-[#111110]">5. DM Buttons</h2>
+            </div>
+
+            <p className="text-xs text-[#70706B]">
+              Add clickable buttons to help people take the next step.
+            </p>
+
+            <div className="p-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs text-[#70706B]">
+              <span className="font-semibold text-[#111110]">Helper text: </span>
+              Use a valid destination URL and a short, action-focused label.
+            </div>
+
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
+              <div>
+                <label className="block text-xs font-bold text-[#111110] mb-1">
+                  Button label <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={buttonLabel}
+                  onChange={(e) => setButtonLabel(e.target.value)}
+                  placeholder="e.g. View the guide"
+                  className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#15803D] shadow-2xs"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-bold text-[#111110] mb-1">
+                  Destination URL <span className="text-red-500">*</span>
+                </label>
+                <input
+                  type="text"
+                  value={destinationUrl}
+                  onChange={(e) => setDestinationUrl(e.target.value)}
+                  placeholder="https://example.com/guide"
+                  className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs font-mono text-[#111110] outline-none focus:border-[#15803D] shadow-2xs"
+                />
+              </div>
+            </div>
+          </section>
+
+          {/* ══════════════════════════════════════════════════════════════
+              6. ADVANCED SETTINGS
+          ══════════════════════════════════════════════════════════════ */}
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
+            <div className="flex items-center justify-between gap-3">
+              <div className="flex items-center gap-2.5">
+                <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
+                  6
+                </span>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">6. Advanced Settings</h2>
+              </div>
+
+              <button
+                type="button"
+                onClick={toggleAllCards}
+                className="text-xs font-semibold text-[#2563EB] hover:underline cursor-pointer"
+              >
+                {allExpanded ? 'Collapse all' : 'Expand all'}
+              </button>
+            </div>
+
+            <p className="text-xs text-[#70706B]">
+              Customize optional behavior for your automation.
+            </p>
+
+            {/* ── SUB-SECTION: MATCH BEHAVIOR ── */}
+            <div className="p-4 bg-[#FBFBFA] border border-[#ECECE8] rounded-2xl space-y-3">
+              <div>
+                <h3 className="text-xs font-bold text-[#111110]">Match behavior</h3>
+                <p className="text-xs text-[#70706B] mt-0.5">
+                  Choose whether keywords must match exactly or can appear within a comment.
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
+                <button
+                  type="button"
+                  onClick={() => setMatchBehavior('contains')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    matchBehavior === 'contains'
+                      ? 'border-[#15803D] bg-white ring-2 ring-[#15803D]/10'
+                      : 'border-[#ECECE8] bg-white hover:border-[#D1D1CB]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#111110]">Contains keyword</span>
+                    {matchBehavior === 'contains' && <Check size={14} className="text-[#15803D]" />}
+                  </div>
+                  <p className="text-[11px] text-[#70706B] mt-1">
+                    Trigger DM if any keyword appears anywhere in the comment.
+                  </p>
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setMatchBehavior('exact')}
+                  className={`p-3 rounded-xl border text-left transition-all cursor-pointer ${
+                    matchBehavior === 'exact'
+                      ? 'border-[#15803D] bg-white ring-2 ring-[#15803D]/10'
+                      : 'border-[#ECECE8] bg-white hover:border-[#D1D1CB]'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <span className="text-xs font-bold text-[#111110]">Exact match only</span>
+                    {matchBehavior === 'exact' && <Check size={14} className="text-[#15803D]" />}
+                  </div>
+                  <p className="text-[11px] text-[#70706B] mt-1">
+                    Keywords must match the comment exactly without extra words.
+                  </p>
+                </button>
+              </div>
+            </div>
+
+            {/* ── SUB-SECTION: ADDITIONAL OPTIONS ── */}
+            <div className="space-y-3 pt-1">
+              <div>
+                <h3 className="text-xs font-bold text-[#111110]">Additional options</h3>
+                <p className="text-xs text-[#70706B] mt-0.5">
+                  Configure eligible follow-up behavior and other supported features.
+                </p>
+              </div>
+
+              {/* CARD C: COMMENT TEASER REPLY (PREMIUM) */}
+              <div className="border border-[#ECECE8] rounded-2xl overflow-hidden transition-all">
+                <div className="p-4 flex items-center justify-between gap-3 bg-white">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-green-50 text-[#15803D] flex items-center justify-center shrink-0">
+                      <MessageSquare size={18} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#111110]">
+                          Comment Teaser Reply
+                        </span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          ⚡ PREMIUM
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#70706B] mt-0.5">
+                        Post a public reply (&ldquo;Check your DM! 📩&rdquo;) to boost post engagement algorithmically.
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setTeaserEnabled(!teaserEnabled)}
+                      className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
+                        teaserEnabled ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          teaserEnabled ? 'translate-x-4' : 'translate-x-0'
+                        }`}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleCard('teaser')}
+                      className="p-1 text-[#70706B] hover:text-[#111110] cursor-pointer"
+                    >
+                      {expandedCards.teaser ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                  </div>
+                </div>
+
+                {expandedCards.teaser && (
+                  <div className="p-4 pt-1 border-t border-[#F4F4F0] bg-[#FAFAF8] space-y-2">
+                    <label className="block text-xs font-semibold text-[#111110]">
+                      Public Comment Reply Message
+                    </label>
+                    <input
+                      type="text"
+                      value={teaserMessage}
+                      onChange={(e) => setTeaserMessage(e.target.value)}
+                      placeholder="Check your DM! 📩"
+                      className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#15803D]"
+                    />
                   </div>
                 )}
               </div>
-            );
-          })}
-        </div>
-      </div>
 
-      {/* 2. REPLY TO ALL CARD (GATED: PREMIUM / PRO) */}
-      <FeatureGate featureKey="reply_to_all">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs flex items-center justify-between gap-4">
-          <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-xl bg-[#F0FDF4] text-[#15803D] flex items-center justify-center shrink-0">
-              <Repeat size={18} />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h2 className="text-sm font-bold text-[#111110]">Reply to All</h2>
-                <PlanBadge tier="PREMIUM" size="xs" />
-              </div>
-              <div className="text-xs font-semibold text-[#111110] mt-0.5">Enable Reply to All</div>
-              <p className="text-xs text-[#70706B]">Respond to ALL comments without keyword matching</p>
-            </div>
-          </div>
-
-          {/* Toggle Switch */}
-          <label className="relative inline-flex items-center cursor-pointer shrink-0">
-            <input
-              type="checkbox"
-              checked={replyToAll}
-              onChange={(e) => setReplyToAll(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-          </label>
-        </div>
-      </FeatureGate>
-
-      {/* 3. TRIGGER KEYWORDS CARD (Hidden if Reply to All is checked) */}
-      {!replyToAll && (
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4 animate-in fade-in duration-150">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><MessageSquare size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Trigger Keywords</h2>
-            </div>
-            {isLocked('expanded_keywords') && (
-              <span className="text-[11px] text-[#70706B] font-semibold">
-                Free limit: {keywords.length} / 3 keywords
-              </span>
-            )}
-          </div>
-
-          <div>
-            <label className="block text-xs font-semibold text-[#111110] mb-1.5">
-              What keywords should they comment?
-            </label>
-            <div className="flex items-center gap-2">
-              <input
-                type="text"
-                value={keywordInput}
-                onChange={(e) => setKeywordInput(e.target.value)}
-                onKeyDown={handleKeywordKeyDown}
-                placeholder={
-                  keywords.length >= 3 && isLocked('expanded_keywords')
-                    ? '3 keywords limit reached (Upgrade to add more)'
-                    : 'Type keyword and press Enter'
-                }
-                disabled={keywords.length >= 3 && isLocked('expanded_keywords')}
-                className="flex-1 px-3.5 py-2.5 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF] disabled:bg-gray-50"
-              />
-              <button
-                type="button"
-                onClick={handleAddKeyword}
-                className="px-4 py-2.5 bg-[#F4F4F0] hover:bg-[#ECECE8] text-[#111110] text-xs font-bold rounded-xl transition-colors cursor-pointer"
-              >
-                Add
-              </button>
-            </div>
-          </div>
-
-          {/* Keyword quota warning for Free tier */}
-          {keywords.length >= 3 && isLocked('expanded_keywords') && (
-            <div className="p-3 bg-amber-50 border border-amber-200 rounded-xl flex items-center justify-between text-xs text-amber-800">
-              <span>Free plan limit: 3 keywords reached ({keywords.length}/3).</span>
-              <button
-                type="button"
-                onClick={() => openUpgradeModal('PREMIUM', 'expanded_keywords')}
-                className="font-bold underline text-amber-900 cursor-pointer"
-              >
-                Unlock Unlimited Keywords
-              </button>
-            </div>
-          )}
-
-          {/* Chips */}
-          <div className="flex flex-wrap gap-2 pt-1">
-            {keywords.map((kw) => (
-              <span
-                key={kw}
-                className="inline-flex items-center gap-1.5 px-3 py-1 bg-[#F4F4F0] text-[#111110] text-xs font-bold rounded-lg border border-[#ECECE8]"
-              >
-                <span>{kw}</span>
-                <button
-                  type="button"
-                  onClick={() => handleRemoveKeyword(kw)}
-                  className="text-[#70706B] hover:text-red-600 cursor-pointer"
-                >
-                  <X size={12} />
-                </button>
-              </span>
-            ))}
-          </div>
-
-          <p className="text-[11px] text-[#70706B]">
-            Users who comment any of these keywords will trigger the automation
-          </p>
-        </div>
-      )}
-
-      {/* 4. ASK TO FOLLOW CARD (GATED: PREMIUM / PRO) */}
-      <FeatureGate featureKey="ask_to_follow">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><UserPlus size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Ask to Follow</h2>
-              <PlanBadge tier="PREMIUM" size="xs" />
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={askFollowEnabled}
-                onChange={(e) => setAskFollowEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-            </label>
-          </div>
-
-          <div>
-            <div className="text-xs font-semibold text-[#111110]">Ask user to follow first</div>
-            <p className="text-xs text-[#70706B]">Politely ask the user to follow you before receiving the DM</p>
-          </div>
-
-          {askFollowEnabled && (
-            <div className="space-y-4 pt-3 border-t border-[#ECECE8] animate-in fade-in duration-150">
-              {/* Blue Callout: How it works */}
-              <div className="p-4 bg-[#EFF6FF] border border-[#BFDBFE] rounded-xl text-xs text-[#1E40AF] space-y-1.5 leading-relaxed">
-                <div className="font-bold flex items-center gap-1.5 text-[#1D4ED8]">
-                  <span>💡</span>
-                  <span>How it works:</span>
-                </div>
-                <ol className="list-decimal list-inside space-y-1 text-[11px] text-[#1E3A8A]">
-                  <li>User comments the keyword on your post</li>
-                  <li>Bot sends a DM with a follow button</li>
-                  <li>User taps the button, follows your account, then replies or wait</li>
-                  <li>Bot verifies the follow and sends the content instantly ✅</li>
-                </ol>
-              </div>
-
-              {/* Ask-to-Follow Message */}
-              <div>
-                <label className="block text-xs font-semibold text-[#111110] mb-1">
-                  Ask-to-Follow Message
-                </label>
-                <textarea
-                  rows={3}
-                  value={askFollowMessage}
-                  onChange={(e) => setAskFollowMessage(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] leading-relaxed outline-none focus:border-[#0066FF]"
-                />
-                <p className="text-[11px] text-[#70706B] mt-1">
-                  Use {'{account_name}'} to auto-insert your Instagram username. After following, the user can send any reply in the chat and gets the content instantly.
-                </p>
-              </div>
-
-              {/* Retry Message */}
-              <div>
-                <label className="block text-xs font-semibold text-[#111110] mb-1">
-                  Retry Message (follow not detected)
-                </label>
-                <textarea
-                  rows={2}
-                  value={retryMessage}
-                  onChange={(e) => setRetryMessage(e.target.value)}
-                  placeholder="Leave empty to use the default English message"
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                />
-              </div>
-
-              {/* Success Message */}
-              <div>
-                <label className="block text-xs font-semibold text-[#111110] mb-1">
-                  Success Message (after follow confirmed)
-                </label>
-                <textarea
-                  rows={2}
-                  value={successMessage}
-                  onChange={(e) => setSuccessMessage(e.target.value)}
-                  placeholder="Leave empty to use the default English message"
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                />
-              </div>
-
-              {/* Button Label */}
-              <div>
-                <label className="block text-xs font-semibold text-[#111110] mb-1">
-                  "I have followed" Button Label
-                </label>
-                <input
-                  type="text"
-                  value={followButtonLabel}
-                  onChange={(e) => setFollowButtonLabel(e.target.value)}
-                  placeholder='Default: "Yes, I have followed ✅"'
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                />
-                <p className="text-[11px] text-[#70706B] mt-1">
-                  All these texts support any language (e.g. Traditional Chinese) and are available on every plan. Instagram limits the button to 20 characters.
-                </p>
-              </div>
-            </div>
-          )}
-        </div>
-      </FeatureGate>
-
-      {/* 5. COMMENT TEASER REPLY CARD (GATED: PREMIUM / PRO) */}
-      <FeatureGate featureKey="comment_teaser_reply">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Repeat size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Comment Teaser Reply</h2>
-              <PlanBadge tier="PREMIUM" size="xs" />
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={teaserEnabled}
-                onChange={(e) => setTeaserEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-            </label>
-          </div>
-
-          <div>
-            <div className="text-xs font-semibold text-[#111110]">Reply "check your DM" to comment</div>
-            <p className="text-xs text-[#70706B]">Automatically reply to the comment publicly so others can see</p>
-          </div>
-
-          {teaserEnabled && (
-            <div className="space-y-2 pt-3 border-t border-[#ECECE8] animate-in fade-in duration-150">
-              <label className="block text-xs font-semibold text-[#111110]">
-                Teaser Message
-              </label>
-              <input
-                type="text"
-                value={teaserMessage}
-                onChange={(e) => setTeaserMessage(e.target.value)}
-                placeholder="Check your DM! 📩"
-                className="w-full px-3.5 py-2.5 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-              />
-              <div className="flex items-center justify-between text-[11px] text-[#70706B]">
-                <span>Posted as a public reply after the DM is sent. Delay between 10 seconds.</span>
-                <span>{teaserMessage.length}/300 characters</span>
-              </div>
-            </div>
-          )}
-        </div>
-      </FeatureGate>
-
-      {/* 6. TRIGGER RESPONSE DM CARD */}
-      <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-        <div className="flex items-center gap-2">
-          <span className="text-[#111110]"><Send size={16} /></span>
-          <h2 className="text-sm font-bold text-[#111110]">Trigger Response DM</h2>
-        </div>
-
-        <div>
-          <label className="block text-xs font-semibold text-[#111110] mb-1.5">
-            Message sent when user DMs the keyword
-          </label>
-          <textarea
-            rows={4}
-            value={responseDm}
-            onChange={(e) => setResponseDm(e.target.value)}
-            placeholder="e.g., Hey! 👋 Here's what you asked for... You can also put link or send card"
-            className="w-full px-3.5 py-2.5 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] leading-relaxed outline-none focus:border-[#0066FF]"
-          />
-          <div className="flex items-center justify-between text-[11px] text-[#70706B] mt-1">
-            <span>This is the first message users receive when they DM your keyword</span>
-            <span>{responseDm.length}/1000 characters</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 7. DM BUTTONS (OPTIONAL) CARD (GATED: PREMIUM / PRO) */}
-      <FeatureGate featureKey="dm_buttons">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Link2 size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">DM Buttons (Optional)</h2>
-              <PlanBadge tier="PREMIUM" size="xs" />
-            </div>
-            <span className="text-xs text-[#70706B]">{buttons.length}/3 buttons</span>
-          </div>
-          <p className="text-xs text-[#70706B] -mt-2">
-            Add clickable buttons to your DM response (max 3)
-          </p>
-
-          {/* Existing Buttons */}
-          {buttons.length > 0 && (
-            <div className="space-y-2">
-              {buttons.map((btn) => (
-                <div
-                  key={btn.id}
-                  className="flex items-center justify-between gap-3 p-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs"
-                >
-                  <div className="flex items-center gap-2 min-w-0">
-                    <span className="font-bold text-[#111110]">{btn.label}</span>
-                    <span className="text-[#70706B] font-mono truncate">{btn.url}</span>
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveDMButton(btn.id)}
-                    className="text-[#70706B] hover:text-red-600 p-1"
-                  >
-                    <Trash2 size={14} />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {/* Add Button Form / Trigger */}
-          {showAddButton ? (
-            <div className="p-4 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl space-y-3 animate-in fade-in duration-150">
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <div>
-                  <label className="block text-xs font-semibold text-[#111110] mb-1">
-                    Button Label
-                  </label>
-                  <input
-                    type="text"
-                    value={newButtonLabel}
-                    onChange={(e) => setNewButtonLabel(e.target.value)}
-                    placeholder="e.g. View the guide"
-                    className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-lg text-xs outline-none focus:border-[#0066FF]"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-semibold text-[#111110] mb-1">
-                    Target URL
-                  </label>
-                  <input
-                    type="text"
-                    value={newButtonUrl}
-                    onChange={(e) => setNewButtonUrl(e.target.value)}
-                    placeholder="https://..."
-                    className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-lg text-xs font-mono outline-none focus:border-[#0066FF]"
-                  />
-                </div>
-              </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddButton(false)}
-                  className="px-3 py-1.5 text-xs text-[#70706B] hover:text-[#111110]"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleAddDMButton}
-                  className="px-4 py-1.5 bg-[#0066FF] text-white text-xs font-bold rounded-lg cursor-pointer"
-                >
-                  Add Button
-                </button>
-              </div>
-            </div>
-          ) : (
-            buttons.length < 3 && (
-              <button
-                type="button"
-                onClick={() => setShowAddButton(true)}
-                className="inline-flex items-center gap-1.5 px-4 py-2 border border-[#ECECE8] rounded-xl text-xs font-semibold text-[#111110] hover:bg-[#FBFBFA] transition-colors cursor-pointer"
-              >
-                <Plus size={14} />
-                <span>Add Button</span>
-              </button>
-            )
-          )}
-        </div>
-      </FeatureGate>
-
-      {/* 8. FOLLOW-UP DMS CARD (GATED: PREMIUM / PRO) */}
-      <FeatureGate featureKey="follow_up_dms">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Clock size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Follow-up DMs</h2>
-              <PlanBadge tier="PREMIUM" size="xs" />
-            </div>
-
-            <div className="flex items-center gap-2">
-              <span className="text-xs text-[#70706B]">Enabled</span>
-              <label className="relative inline-flex items-center cursor-pointer shrink-0">
-                <input
-                  type="checkbox"
-                  checked={followUpEnabled}
-                  onChange={(e) => setFollowUpEnabled(e.target.checked)}
-                  className="sr-only peer"
-                />
-                <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-              </label>
-            </div>
-          </div>
-
-          {followUpEnabled && (
-            <div className="space-y-5 pt-3 border-t border-[#ECECE8] animate-in fade-in duration-150">
-              {/* Blue Callout */}
-              <div className="p-4 bg-[#EFF6FF] border border-[#BFDBFE] rounded-xl text-xs text-[#1E3A8A] leading-relaxed">
-                <strong>How it works:</strong> After a lead gets your first DM, Comlina sends these follow-up messages at the delays you set — all inside Instagram's 24-hour messaging window. Any customer reply resets the clock. If the lead replies with a stop keyword, all pending follow-ups are cancelled instantly.
-              </div>
-
-              {/* Follow-up messages list */}
-              <div className="space-y-3">
-                <label className="block text-xs font-bold text-[#111110]">
-                  Follow-up messages
-                </label>
-
-                {followUps.map((item, idx) => (
-                  <div
-                    key={item.id}
-                    className="p-4 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl space-y-3"
-                  >
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="font-bold text-[#70706B] uppercase tracking-wider text-[10px]">
-                        Message #{idx + 1}
-                      </span>
-                      {followUps.length > 1 && (
-                        <button
-                          type="button"
-                          onClick={() => handleRemoveFollowUp(item.id)}
-                          className="text-[#70706B] hover:text-red-600 p-1"
-                        >
-                          <Trash2 size={13} />
-                        </button>
-                      )}
+              {/* CARD D: FOLLOW-UP DMS (PREMIUM) */}
+              <div className="border border-[#ECECE8] rounded-2xl overflow-hidden transition-all">
+                <div className="p-4 flex items-center justify-between gap-3 bg-white">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-sky-50 text-[#0284C7] flex items-center justify-center shrink-0">
+                      <Clock size={18} />
                     </div>
-
-                    <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-start">
-                      {/* Time controls */}
-                      <div className="sm:col-span-4 space-y-1">
-                        <span className="text-[10px] font-bold text-[#70706B] uppercase">AFTER</span>
-                        <div className="flex items-center gap-1.5">
-                          <div className="flex-1 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              value={item.hours}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setFollowUps(followUps.map((f) => f.id === item.id ? { ...f, hours: val } : f));
-                              }}
-                              className="w-full text-center px-2 py-1.5 bg-white border border-[#ECECE8] rounded-lg text-xs font-bold"
-                            />
-                            <span className="text-[9px] text-[#70706B]">hrs</span>
-                          </div>
-                          <div className="flex-1 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              max="59"
-                              value={item.minutes}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setFollowUps(followUps.map((f) => f.id === item.id ? { ...f, minutes: val } : f));
-                              }}
-                              className="w-full text-center px-2 py-1.5 bg-white border border-[#ECECE8] rounded-lg text-xs font-bold"
-                            />
-                            <span className="text-[9px] text-[#70706B]">min</span>
-                          </div>
-                          <div className="flex-1 text-center">
-                            <input
-                              type="number"
-                              min="0"
-                              max="59"
-                              value={item.seconds}
-                              onChange={(e) => {
-                                const val = Number(e.target.value);
-                                setFollowUps(followUps.map((f) => f.id === item.id ? { ...f, seconds: val } : f));
-                              }}
-                              className="w-full text-center px-2 py-1.5 bg-white border border-[#ECECE8] rounded-lg text-xs font-bold"
-                            />
-                            <span className="text-[9px] text-[#70706B]">sec</span>
-                          </div>
-                        </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#111110]">Follow-up DMs</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          ⚡ PREMIUM
+                        </span>
                       </div>
-
-                      {/* Message Box */}
-                      <div className="sm:col-span-8 space-y-1">
-                        <span className="text-[10px] font-bold text-[#70706B] uppercase">MESSAGE</span>
-                        <textarea
-                          rows={2}
-                          value={item.message}
-                          onChange={(e) => {
-                            const val = e.target.value;
-                            setFollowUps(followUps.map((f) => f.id === item.id ? { ...f, message: val } : f));
-                          }}
-                          className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-lg text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                        />
-                      </div>
+                      <p className="text-[11px] text-[#70706B] mt-0.5">
+                        Automatically check in if the follower hasn&apos;t clicked your link after a few hours.
+                      </p>
                     </div>
                   </div>
-                ))}
 
-                <button
-                  type="button"
-                  onClick={handleAddFollowUp}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-semibold text-[#0066FF] hover:bg-[#F0F7FF] rounded-lg transition-colors cursor-pointer"
-                >
-                  <Plus size={14} />
-                  <span>Add follow-up</span>
-                </button>
-                <p className="text-[11px] text-[#70706B]">
-                  Delay is counted from the time the user commented/any customer reply resets the 24-hour window limit.
-                </p>
-              </div>
-
-              {/* AI Rewrite Prompt */}
-              <div className="space-y-2 pt-2 border-t border-[#ECECE8]">
-                <div className="flex items-center justify-between">
-                  <label className="text-xs font-semibold text-[#111110]">
-                    AI rewrite prompt <span className="text-[#70706B] font-normal">(optional)</span>
-                  </label>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsGeneratingAi(true);
-                      setTimeout(() => {
-                        setAiPrompt('Write in a warm, casual voice. Keep it under 200 chars. Reference the lead by @username when it feels natural.');
-                        setIsGeneratingAi(false);
-                      }, 500);
-                    }}
-                    className="inline-flex items-center gap-1 text-[11px] font-bold text-[#0066FF] hover:underline cursor-pointer"
-                  >
-                    <Sparkles size={12} />
-                    <span>Generate messages with AI</span>
-                  </button>
-                </div>
-
-                <textarea
-                  rows={2}
-                  value={aiPrompt}
-                  onChange={(e) => setAiPrompt(e.target.value)}
-                  placeholder="e.g. Write in a warm, casual voice. Keep it under 200 chars. Reference the lead by @username when it feels natural."
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                />
-                <p className="text-[11px] text-[#70706B]">
-                  Each sent follow-up is rewritten by AI using your instructions before sending. Leave empty to send messages exactly as written.
-                </p>
-              </div>
-
-              {/* Stop Keywords */}
-              <div className="space-y-1.5 pt-2 border-t border-[#ECECE8]">
-                <label className="block text-xs font-semibold text-[#111110]">
-                  Stop keywords
-                </label>
-                <input
-                  type="text"
-                  value={stopKeywords}
-                  onChange={(e) => setStopKeywords(e.target.value)}
-                  placeholder="stop, unsubscribe, cancel, no thanks"
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
-                />
-                <p className="text-[11px] text-[#70706B]">
-                  Comma-separated. If a user replies with any of these words, all pending follow-ups are cancelled.
-                </p>
-              </div>
-
-              {/* Stop When You Receive These Details */}
-              <div className="space-y-2 pt-2 border-t border-[#ECECE8]">
-                <label className="block text-xs font-semibold text-[#111110]">
-                  Stop when you receive these details
-                </label>
-
-                <div className="flex flex-wrap gap-2">
-                  {availableDetails.map((detail) => {
-                    const isChecked = stopDetails.includes(detail);
-                    return (
-                      <button
-                        key={detail}
-                        type="button"
-                        onClick={() => handleToggleStopDetail(detail)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-semibold transition-all cursor-pointer ${
-                          isChecked
-                            ? 'bg-[#0066FF] text-white shadow-xs'
-                            : 'bg-[#F4F4F0] border border-[#ECECE8] text-[#70706B] hover:text-[#111110]'
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="button"
+                      onClick={() => setFollowUpEnabled(!followUpEnabled)}
+                      className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
+                        followUpEnabled ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                      }`}
+                    >
+                      <span
+                        className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                          followUpEnabled ? 'translate-x-4' : 'translate-x-0'
                         }`}
-                      >
-                        {detail}
-                      </button>
-                    );
-                  })}
+                      />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => toggleCard('followUp')}
+                      className="p-1 text-[#70706B] hover:text-[#111110] cursor-pointer"
+                    >
+                      {expandedCards.followUp ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                    </button>
+                  </div>
                 </div>
 
-                <input
-                  type="text"
-                  value={otherDetails}
-                  onChange={(e) => setOtherDetails(e.target.value)}
-                  placeholder="Other details to look for (comma-separated, e.g. budget, city)"
-                  className="w-full px-3.5 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF] mt-2"
-                />
+                {expandedCards.followUp && (
+                  <div className="p-4 pt-1 border-t border-[#F4F4F0] bg-[#FAFAF8] space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs text-[#70706B]">Send follow-up after:</span>
+                      <select
+                        value={followUpHours}
+                        onChange={(e) => setFollowUpHours(Number(e.target.value))}
+                        className="px-2.5 py-1 bg-white border border-[#ECECE8] rounded-lg text-xs font-semibold outline-none"
+                      >
+                        <option value={1}>1 hour</option>
+                        <option value={2}>2 hours</option>
+                        <option value={6}>6 hours</option>
+                        <option value={12}>12 hours</option>
+                        <option value={24}>24 hours</option>
+                      </select>
+                    </div>
 
-                <p className="text-[11px] text-[#70706B] leading-relaxed">
-                  Leave empty to keep sending even if follow-up. If selected, follow-up messages will stop as soon as the customer provides all of them — they can arrive across several messages, or in any order, and our smart AI will analyze the conversation. Works with long/imperfect phone format like '+1 (555) 012-3456', or names written in words. Daily/weekly/monthly AI usage resets automatically on all paid plans.
-                </p>
+                    <div>
+                      <label className="block text-xs font-semibold text-[#111110] mb-1">
+                        Follow-up Message
+                      </label>
+                      <textarea
+                        rows={2}
+                        value={followUpMessage}
+                        onChange={(e) => setFollowUpMessage(e.target.value)}
+                        className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#15803D]"
+                      />
+                    </div>
+                  </div>
+                )}
+              </div>
+
+              {/* CARD E: REPLY TO ALL COMMENTS (PREMIUM) */}
+              <div className="border border-[#ECECE8] rounded-2xl overflow-hidden transition-all">
+                <div className="p-4 flex items-center justify-between gap-3 bg-white">
+                  <div className="flex items-center gap-3">
+                    <div className="w-8 h-8 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center shrink-0">
+                      <Repeat size={18} />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs font-bold text-[#111110]">Reply to All Comments</span>
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
+                          ⚡ PREMIUM
+                        </span>
+                      </div>
+                      <p className="text-[11px] text-[#70706B] mt-0.5">
+                        Engage every commenter without requiring an exact keyword trigger.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setReplyToAll(!replyToAll)}
+                    className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
+                      replyToAll ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                    }`}
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
+                        replyToAll ? 'translate-x-4' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
               </div>
             </div>
-          )}
+          </section>
         </div>
-      </FeatureGate>
 
-      {/* 9. LIVE COMMENT AUTOMATION (GATED: PRO) */}
-      <FeatureGate featureKey="live_comment">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Radio size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Live Comment Automation</h2>
-              <PlanBadge tier="PRO" size="xs" />
+        {/* RIGHT COLUMN: 7. LIVE INSTAGRAM SIMULATOR (STICKY >= 1200px) */}
+        <aside
+          className={`xl:col-span-5 2xl:col-span-5 xl:sticky xl:top-6 ${
+            mobileStudioTab === 'editor' ? 'hidden xl:block' : 'block'
+          }`}
+        >
+          <div className="bg-white border border-[#ECECE8] rounded-3xl p-5 shadow-xs space-y-4 max-w-md mx-auto">
+            <InstagramPhonePreview
+              accountName={activeAccountName}
+              avatarUrl={activeAvatarUrl}
+              selectedPost={postMode === 'specific' ? selectedPost : null}
+              keywords={keywords}
+              deliveryText={responseDm}
+              deliveryLinkButtonText={buttonLabel}
+              deliveryLinkUrl={destinationUrl}
+              askFollowEnabled={askFollowEnabled}
+              askFollowText={askFollowMessage || `Follow @${activeAccountName} to get more such resources and updates!`}
+              publicReplyEnabled={teaserEnabled}
+              publicReplyText={teaserMessage}
+              followupEnabled={followUpEnabled}
+              followupHours={followUpHours}
+              followupText={followUpMessage}
+              defaultTab="dm"
+              showStepHeader={true}
+              isConnectedAccount={!!selectedAccount}
+              accountStatus={selectedAccount?.status}
+            />
+
+            {/* Mobile Return to Editor Button */}
+            <div className="xl:hidden pt-2 border-t border-[#ECECE8]">
+              <button
+                type="button"
+                onClick={() => setMobileStudioTab('editor')}
+                className="w-full py-2.5 bg-[#F4F4F0] hover:bg-[#ECECE8] text-[#111110] font-bold text-xs rounded-xl transition-colors cursor-pointer"
+              >
+                ← Return to Flow Editor
+              </button>
             </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={liveCommentEnabled}
-                onChange={(e) => setLiveCommentEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-            </label>
           </div>
-          <div>
-            <div className="text-xs font-semibold text-[#111110]">Automate responses during Instagram Live</div>
-            <p className="text-xs text-[#70706B]">Instantly DM viewers who comment your trigger keyword while you are live streaming.</p>
-          </div>
-        </div>
-      </FeatureGate>
-
-      {/* 10. AI SMART ASSISTANT (GATED: PRO) */}
-      <FeatureGate featureKey="ai_smart_assistant">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Bot size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">AI Smart Assistant</h2>
-              <PlanBadge tier="PRO" size="xs" />
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={aiAssistantEnabled}
-                onChange={(e) => setAiAssistantEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-            </label>
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-[#111110]">Context-aware conversational AI</div>
-            <p className="text-xs text-[#70706B]">Answers FAQs, qualifies prospects, and overcomes objections automatically in DM.</p>
-          </div>
-        </div>
-      </FeatureGate>
-
-      {/* 11. APPOINTMENT BOOKING (GATED: PRO) */}
-      <FeatureGate featureKey="appointment_booking">
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <span className="text-[#111110]"><Calendar size={16} /></span>
-              <h2 className="text-sm font-bold text-[#111110]">Appointment Booking</h2>
-              <PlanBadge tier="PRO" size="xs" />
-            </div>
-            <label className="relative inline-flex items-center cursor-pointer shrink-0">
-              <input
-                type="checkbox"
-                checked={appointmentBookingEnabled}
-                onChange={(e) => setAppointmentBookingEnabled(e.target.checked)}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-gray-200 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-[#0066FF]" />
-            </label>
-          </div>
-          <div>
-            <div className="text-xs font-semibold text-[#111110]">Book discovery calls in DM</div>
-            <p className="text-xs text-[#70706B]">Qualify leads and book discovery calls directly inside Instagram direct messages.</p>
-          </div>
-        </div>
-      </FeatureGate>
-
-      {/* 9. BOTTOM ACTION BUTTONS */}
-      <div className="pt-4 pb-2 flex items-center justify-end gap-3 border-t border-[#ECECE8]">
-        <FlowActionButtons
-          isValid={isFormValid}
-          isSaving={isSaving}
-          onSaveDraft={() => handleSaveClick('DRAFT')}
-          onPublish={() => handleSaveClick('ACTIVE')}
-        />
+        </aside>
       </div>
-
     </div>
   );
 }
+
+export default CommentToDmFlow;

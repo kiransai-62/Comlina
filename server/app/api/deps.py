@@ -60,16 +60,21 @@ async def get_current_user(
     full_name = user_meta.get("full_name") or user_meta.get("name") or email.split("@")[0]
     avatar_url = user_meta.get("avatar_url") or user_meta.get("picture")
 
-    # First try a fast non-locked lookup
+    # First try a fast non-locked lookup by UUID or by verified Email
     stmt = select(User).where(User.id == user_uuid)
     res = await db.execute(stmt)
     user = res.scalars().first()
 
+    if not user and email:
+        stmt_email = select(User).where(User.email == email.strip().lower())
+        res_email = await db.execute(stmt_email)
+        user = res_email.scalars().first()
+
     if user:
         # Save and update any changed details from the login token
         updated = False
-        if email and user.email != email:
-            user.email = email
+        if email and user.email != email.strip().lower():
+            user.email = email.strip().lower()
             updated = True
         if full_name and user.full_name != full_name and not (user.timezone and user.timezone.startswith("pbkdf2:")):
             user.full_name = full_name
@@ -87,12 +92,15 @@ async def get_current_user(
         # Re-check after acquiring lock (another request may have created the user)
         res = await db.execute(select(User).where(User.id == user_uuid))
         user = res.scalars().first()
+        if not user and email:
+            res_email = await db.execute(select(User).where(User.email == email.strip().lower()))
+            user = res_email.scalars().first()
         if user:
             return user
 
         user = User(
             id=user_uuid,
-            email=email,
+            email=email.strip().lower(),
             full_name=full_name,
             avatar_url=avatar_url
         )
@@ -106,6 +114,9 @@ async def get_current_user(
             logger.info(f"[AUTH] IntegrityError during user creation for {user_uuid}, recovering...")
             res = await db.execute(select(User).where(User.id == user_uuid))
             user = res.scalars().first()
+            if not user and email:
+                res_email = await db.execute(select(User).where(User.email == email.strip().lower()))
+                user = res_email.scalars().first()
             if not user:
                 raise HTTPException(
                     status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,

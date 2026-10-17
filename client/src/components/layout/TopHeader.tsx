@@ -33,7 +33,7 @@ function MenuIcon({ size = 22, className = '' }: { size?: number; className?: st
   );
 }
 import { authService, AuthUser } from '@/lib/auth';
-import { instagramApi } from '@/features/instagram/api';
+import { useInstagramConnection } from '@/features/instagram';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { useUIStore } from '@/stores/uiStore';
 import { BrandLogo } from '@/components/BrandLogo';
@@ -55,13 +55,7 @@ export function TopHeader() {
     loadUser();
   }, []);
 
-  const { data: accounts = [] } = useQuery({
-    queryKey: ['instagram-accounts'],
-    queryFn: () => instagramApi.listAccounts(),
-  });
-
-  const isConnected = accounts.length > 0;
-  const primaryAccount = isConnected ? accounts[0] : null;
+  const { primaryAccount, isConnected, isChecking, needsReauth } = useInstagramConnection();
 
   const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : 'Creator');
   const displayEmail = user?.email || 'No email registered';
@@ -120,9 +114,23 @@ export function TopHeader() {
           href="/dashboard/instagram-accounts"
           className="hidden md:flex items-center gap-2 text-xs font-medium text-[#70706B] hover:text-[#111110] transition-colors"
         >
-          <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#15803D]' : 'bg-[#D97706]'}`} />
-          <span className="truncate max-w-[120px]">
-            {isConnected ? `@${primaryAccount?.username}` : 'No Account'}
+          <span className={`w-2 h-2 rounded-full ${
+            isConnected 
+              ? 'bg-[#15803D]' 
+              : isChecking 
+              ? 'bg-neutral-400 animate-pulse' 
+              : needsReauth 
+              ? 'bg-[#D97706]' 
+              : 'bg-[#D97706]'
+          }`} />
+          <span className="truncate max-w-[140px]">
+            {isConnected 
+              ? `@${primaryAccount?.username}` 
+              : isChecking 
+              ? 'Checking...' 
+              : needsReauth 
+              ? `@${primaryAccount?.username || 'Account'} (Reconnect)` 
+              : 'No Account'}
           </span>
         </Link>
 

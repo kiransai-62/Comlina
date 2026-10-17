@@ -26,7 +26,7 @@ import {
   X,
   AlertCircle
 } from 'lucide-react';
-import { instagramApi } from '@/features/instagram/api';
+import { instagramApi, useInstagramConnection } from '@/features/instagram';
 import { analyticsApi } from '@/features/analytics/api';
 import { automationsApi } from '@/features/automations/api';
 import { conversationsApi } from '@/features/conversations/api';
@@ -72,16 +72,20 @@ export default function DashboardOverviewPage() {
   }, []);
 
   // Live Data Queries
-  const { 
-    data: accounts, 
-    isLoading: loadingAccounts, 
-    isError: errorAccounts, 
-    error: accountsError, 
-    refetch: refetchAccounts 
-  } = useQuery({
-    queryKey: ['instagram-accounts'],
-    queryFn: () => instagramApi.listAccounts(),
-  });
+  const {
+    accounts,
+    primaryAccount,
+    connectionState,
+    isConnected,
+    isChecking: loadingAccounts,
+    needsReauth,
+    isError: errorAccounts,
+    error: accountsError,
+    refetch: refetchAccounts,
+    startConnect: handleStartMetaOAuth,
+  } = useInstagramConnection();
+
+  const hasAccounts = accounts && accounts.length > 0;
 
   const { 
     data: summary, 
@@ -112,34 +116,15 @@ export default function DashboardOverviewPage() {
     queryFn: () => conversationsApi.list(),
   });
 
-  const isConnected = !!(accounts && accounts.length > 0);
-  const primaryAccount = isConnected && accounts ? accounts[0] : null;
-
   const totalDmsSent = summary?.stats_dms_sent ?? 0;
   const totalComments = summary?.stats_comments ?? 0;
   const totalLeads = summary?.total_leads ?? 0;
-  const conversionRateDisplay = isConnected && summary?.conversion_rate_pct != null 
+  const conversionRateDisplay = hasAccounts && summary?.conversion_rate_pct != null 
     ? `${summary.conversion_rate_pct}%` 
     : '—';
   const followerCountDisplay = primaryAccount?.follower_count != null 
     ? primaryAccount.follower_count.toLocaleString() 
     : '—';
-
-  const handleStartMetaOAuth = async () => {
-    setIsConnectingMeta(true);
-    try {
-      const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/connect/instagram` : undefined;
-      const res = await instagramApi.getConnectUrl(redirectUri);
-      if (res?.authorization_url) {
-        window.location.href = res.authorization_url;
-      } else {
-        throw new Error('No authorization URL returned');
-      }
-    } catch (err: any) {
-      alert(`Could not start Meta connection: ${err.message || err}`);
-      setIsConnectingMeta(false);
-    }
-  };
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
@@ -156,14 +141,42 @@ export default function DashboardOverviewPage() {
                   ? 'bg-white border-[#ECECE8] text-[#333330]' 
                   : loadingAccounts
                   ? 'bg-[#F9F9F8] border-[#ECECE8] text-[#70706B]'
+                  : needsReauth
+                  ? 'bg-[#FEF3C7] border-[#F59E0B] text-[#92400E]'
                   : 'bg-[#FEF3C7] border-[#F59E0B] text-[#92400E]'
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#22C55E]' : loadingAccounts ? 'bg-neutral-400 animate-pulse' : 'bg-[#D97706]'}`} />
-              <span>{isConnected ? `@${primaryAccount?.username}` : loadingAccounts ? 'Checking Account...' : 'No Account Connected'}</span>
+              <span className={`w-2 h-2 rounded-full ${
+                isConnected 
+                  ? 'bg-[#22C55E]' 
+                  : loadingAccounts 
+                  ? 'bg-neutral-400 animate-pulse' 
+                  : 'bg-[#D97706]'
+              }`} />
+              <span>
+                {isConnected 
+                  ? `@${primaryAccount?.username}` 
+                  : loadingAccounts 
+                  ? 'Checking Account...' 
+                  : needsReauth
+                  ? `@${primaryAccount?.username || 'Account'}`
+                  : 'No Account Connected'}
+              </span>
               <span className="text-[#9E9E96]">•</span>
-              <span className={`font-semibold ${isConnected ? 'text-[#15803D]' : loadingAccounts ? 'text-[#70706B]' : 'text-[#D97706]'}`}>
-                {isConnected ? 'Live' : loadingAccounts ? 'Loading...' : 'Connect Required'}
+              <span className={`font-semibold ${
+                isConnected 
+                  ? 'text-[#15803D]' 
+                  : loadingAccounts 
+                  ? 'text-[#70706B]' 
+                  : 'text-[#D97706]'
+              }`}>
+                {isConnected 
+                  ? 'Live' 
+                  : loadingAccounts 
+                  ? 'Loading...' 
+                  : needsReauth 
+                  ? 'Reconnect Required' 
+                  : 'Connect Required'}
               </span>
             </div>
           </div>
@@ -178,7 +191,7 @@ export default function DashboardOverviewPage() {
             className="inline-flex items-center gap-1.5 px-3.5 py-2 bg-white border border-[#E0E0DA] hover:bg-[#F7F7F5] text-[#111110] text-xs font-medium rounded-lg transition-all"
           >
             <RefreshCw size={14} className="text-[#70706B]" />
-            <span>{isConnected ? 'Manage Account' : 'Accounts'}</span>
+            <span>{hasAccounts ? 'Manage Account' : 'Accounts'}</span>
           </Link>
           {isConnected ? (
             <Link
@@ -188,6 +201,14 @@ export default function DashboardOverviewPage() {
               <Plus size={15} />
               <span>New Automation</span>
             </Link>
+          ) : needsReauth ? (
+            <button
+              onClick={handleStartMetaOAuth}
+              className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#D97706] hover:bg-[#B45309] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+            >
+              <Instagram size={15} />
+              <span>Reconnect Instagram</span>
+            </button>
           ) : loadingAccounts ? null : (
             <button
               onClick={() => setIsConnectModalOpen(true)}
@@ -199,6 +220,30 @@ export default function DashboardOverviewPage() {
           )}
         </div>
       </div>
+
+      {/* Instagram Reauthorization Banner */}
+      {needsReauth && (
+        <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-center justify-between gap-4 shadow-2xs">
+          <div className="flex items-center gap-3">
+            <AlertCircle className="text-amber-600 shrink-0" size={20} />
+            <div>
+              <div className="text-xs font-semibold text-amber-900">
+                Instagram Reconnection Required
+              </div>
+              <div className="text-xs text-amber-700">
+                Your Meta Graph API authorization for @{primaryAccount?.username} has expired or needs permissions refresh. Reconnect now to restore automated DM responses.
+              </div>
+            </div>
+          </div>
+          <button
+            onClick={handleStartMetaOAuth}
+            className="inline-flex items-center gap-1.5 px-3.5 py-1.5 bg-amber-600 hover:bg-amber-700 text-white text-xs font-semibold rounded-xl shadow-xs transition-all shrink-0 cursor-pointer"
+          >
+            <Instagram size={14} />
+            <span>Reconnect Now</span>
+          </button>
+        </div>
+      )}
 
       {/* Backend / API Error State Banner */}
       {(errorAccounts || errorSummary) && (
@@ -236,7 +281,7 @@ export default function DashboardOverviewPage() {
           <h3 className="text-sm font-bold text-[#111110]">Loading your workspace...</h3>
           <p className="text-xs text-[#70706B]">Checking connected Instagram accounts and real-time metrics.</p>
         </div>
-      ) : isConnected ? (
+      ) : hasAccounts ? (
         <>
           {/* 2. Stats Overview Section Header */}
           <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
