@@ -59,9 +59,11 @@ jobs:
         env:
           ENVIRONMENT: development
           TOKEN_ENCRYPTION_KEY: -YSQRVH6AHTJ1PMLC9Y53jfzV1Ytu4EUWZ7c4qJDbco=
+          META_APP_SECRET: test_meta_app_secret_12345
+          META_WEBHOOK_VERIFY_TOKEN: test_verify_token_12345
           SUPABASE_URL: https://placeholder.supabase.co
           SUPABASE_JWT_SECRET: placeholder_jwt_secret
-          PYTHONPATH: .:server:worker
+          PYTHONPATH: server:.
         run: python -m pytest server/tests/ -v
 
   worker-test:
@@ -83,5 +85,7 @@ jobs:
       - name: Run Worker Tests
         env:
           TOKEN_ENCRYPTION_KEY: -YSQRVH6AHTJ1PMLC9Y53jfzV1Ytu4EUWZ7c4qJDbco=
-          PYTHONPATH: .:server:worker
-        run: python -m pytest worker/tests/ -v
+          PYTHONPATH: worker:.
+        run: |
+          cd worker
+          python -m pytest tests/ -v
