@@ -289,6 +289,12 @@ async def connect_dev_account(
     Instantly connects a verified Instagram Creator account in development mode.
     Allows testing full automation and conversation flows immediately without waiting for Meta console whitelisting.
     """
+    if settings.ENVIRONMENT != "development":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Dev account connection is disabled in production environments."
+        )
+
     stmt = select(InstagramAccount).where(
         InstagramAccount.workspace_id == workspace.id,
         InstagramAccount.is_active == True

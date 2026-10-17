@@ -927,11 +927,12 @@ export default function DashboardOverviewPage() {
                 <div className="space-y-2">
                   <button
                     type="button"
-                    onClick={() => setConnectStep(3)}
-                    className="w-full py-3.5 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer"
+                    disabled={isConnectingMeta}
+                    onClick={handleStartMetaOAuth}
+                    className="w-full py-3.5 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-bold rounded-xl flex items-center justify-center gap-2 shadow-xs transition-all cursor-pointer disabled:opacity-50"
                   >
-                    <Instagram size={15} />
-                    <span>Continue with Instagram</span>
+                    {isConnectingMeta ? <RefreshCw className="animate-spin" size={15} /> : <Instagram size={15} />}
+                    <span>{isConnectingMeta ? 'Redirecting to Meta...' : 'Continue with Instagram'}</span>
                   </button>
 
                   <div className="flex items-center justify-center gap-1.5 text-[11px] text-[#70706B] pt-2">
@@ -941,158 +942,6 @@ export default function DashboardOverviewPage() {
                 </div>
               </div>
             )}
-
-            {/* STEP 3: Review Permissions */}
-            {connectStep === 3 && (
-              <div className="space-y-5">
-                <div className="flex items-center justify-between pb-2 border-b border-[#ECECE8]">
-                  <button
-                    type="button"
-                    onClick={() => setConnectStep(2)}
-                    className="text-xs font-semibold text-[#70706B] hover:text-[#111110] cursor-pointer"
-                  >
-                    ← Connect Instagram
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsConnectModalOpen(false)}
-                    className="p-1 rounded-full text-[#70706B] hover:text-[#111110] cursor-pointer"
-                  >
-                    <X size={18} />
-                  </button>
-                </div>
-
-                {/* Stepper Header */}
-                <div className="flex items-center justify-between text-[11px] font-semibold text-[#70706B] px-1">
-                  <div className="flex items-center gap-1 text-[#15803D]">
-                    <span className="w-4 h-4 rounded-full bg-[#EAF6EE] text-[#15803D] flex items-center justify-center text-[10px] font-bold">✓</span>
-                    <span>Login</span>
-                  </div>
-                  <span className="text-[#DCDCD6]">→</span>
-                  <div className="flex items-center gap-1 text-[#062E1A] font-bold">
-                    <span className="w-4 h-4 rounded-full bg-[#062E1A] text-white flex items-center justify-center text-[10px]">2</span>
-                    <span>Permissions</span>
-                  </div>
-                  <span className="text-[#DCDCD6]">→</span>
-                  <span>Connecting</span>
-                  <span className="text-[#DCDCD6]">→</span>
-                  <span>Complete</span>
-                </div>
-
-                <div>
-                  <h3 className="text-base font-black text-[#111110]">Review Permissions</h3>
-                  <p className="text-xs text-[#70706B] mt-0.5">Comlina needs the following permissions:</p>
-                </div>
-
-                <div className="space-y-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-2xl p-4">
-                  {[
-                    { title: 'Access profile information', desc: 'Read your Instagram profile details.' },
-                    { title: 'Read comments and mentions', desc: 'View comments, mentions and content.' },
-                    { title: 'Send and manage messages', desc: 'Reply to DMs on your behalf.' },
-                    { title: 'Manage insights', desc: 'View performance and analytics.' },
-                  ].map((perm, idx) => (
-                    <div key={idx} className="flex items-start gap-2.5">
-                      <div className="w-4 h-4 rounded-full bg-[#EAF6EE] text-[#15803D] flex items-center justify-center text-[10px] font-bold shrink-0 mt-0.5">
-                        ✓
-                      </div>
-                      <div>
-                        <div className="text-xs font-bold text-[#111110]">{perm.title}</div>
-                        <div className="text-[11px] text-[#70706B]">{perm.desc}</div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="space-y-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setConnectStep(4);
-                      setTimeout(() => {
-                        setConnectStep(5);
-                      }, 2200);
-                    }}
-                    className="w-full py-3 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
-                  >
-                    Continue
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setIsConnectModalOpen(false)}
-                    className="w-full py-2.5 border border-[#ECECE8] hover:bg-[#FBFBFA] text-xs font-semibold text-[#111110] rounded-xl transition-all cursor-pointer"
-                  >
-                    Cancel
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 4: Connecting (Spinner) */}
-            {connectStep === 4 && (
-              <div className="space-y-6 text-center py-4">
-                <div className="text-xs font-bold text-[#70706B] uppercase tracking-wider">
-                  Finalizing Connection
-                </div>
-
-                <div className="py-6 flex flex-col items-center justify-center">
-                  <div className="w-16 h-16 rounded-full border-4 border-[#EAF6EE] border-t-[#15803D] animate-spin" />
-                </div>
-
-                <div>
-                  <h3 className="text-lg font-black text-[#111110]">Connecting your account...</h3>
-                  <p className="text-xs text-[#70706B] mt-1 leading-relaxed">
-                    This may take a few seconds. Please don&apos;t close this page.
-                  </p>
-                </div>
-              </div>
-            )}
-
-            {/* STEP 5: Success */}
-            {connectStep === 5 && (
-              <div className="space-y-5 text-center py-2">
-                <div className="w-16 h-16 rounded-2xl bg-gradient-to-tr from-[#F58529] via-[#DD2A7B] to-[#8134AF] flex items-center justify-center text-white shadow-xl shadow-pink-500/25 mx-auto relative">
-                  <Instagram size={32} />
-                  <div className="absolute -bottom-1 -right-1 w-6 h-6 rounded-full bg-[#15803D] text-white flex items-center justify-center border-2 border-white text-xs font-bold">
-                    ✓
-                  </div>
-                </div>
-
-                <div>
-                  <h3 className="text-xl font-black text-[#111110]">Instagram Connected!</h3>
-                  <p className="text-xs text-[#70706B] mt-1">
-                    Your account has been successfully connected to Comlina.
-                  </p>
-                </div>
-
-                <div className="bg-[#FBFBFA] border border-[#ECECE8] rounded-2xl p-4 flex items-center gap-3 text-left">
-                  <div className="w-10 h-10 rounded-full bg-[#111110] text-white flex items-center justify-center font-bold text-xs shrink-0">
-                    AW
-                  </div>
-                  <div>
-                    <div className="text-xs font-bold text-[#111110]">aiworkbench.lab</div>
-                    <div className="text-[11px] text-[#70706B]">Business Account • 12.4K followers</div>
-                  </div>
-                </div>
-
-                <div className="space-y-2 pt-2">
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setIsConnectModalOpen(false);
-                      refetchAccounts();
-                      refetchSummary();
-                    }}
-                    className="w-full py-3 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-bold rounded-xl transition-all cursor-pointer shadow-xs"
-                  >
-                    Go to Dashboard
-                  </button>
-                  <Link
-                    href="/dashboard/automations/create"
-                    onClick={() => setIsConnectModalOpen(false)}
-                    className="block w-full py-2.5 border border-[#ECECE8] hover:bg-[#FBFBFA] text-xs font-semibold text-[#111110] rounded-xl transition-all cursor-pointer text-center"
-                  >
-                    Create Automation
-                  </Link>
                 </div>
               </div>
             )}
