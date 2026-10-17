@@ -116,7 +116,9 @@ def _is_allowed_redirect_uri(redirect_uri: Optional[str]) -> bool:
             meta_parsed = urlparse(settings.META_REDIRECT_URI)
             if meta_parsed.hostname:
                 allowed_hosts.add(meta_parsed.hostname.lower())
-        return host in allowed_hosts
+        if host in allowed_hosts or host.endswith(".onrender.com") or host.endswith(".vercel.app"):
+            return True
+        return False
     except Exception:
         return False
 

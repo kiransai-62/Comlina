@@ -122,6 +122,8 @@ class TestInstagramAudit(unittest.IsolatedAsyncioTestCase):
         self.assertTrue(_is_allowed_redirect_uri("http://127.0.0.1:3000/oauth/callback"))
         self.assertTrue(_is_allowed_redirect_uri("https://app.comlina.ai/auth/callback"))
         self.assertTrue(_is_allowed_redirect_uri("https://comlina.com/api/callback"))
+        self.assertTrue(_is_allowed_redirect_uri("https://comlina.onrender.com/connect/instagram"))
+        self.assertTrue(_is_allowed_redirect_uri("https://my-app.vercel.app/connect/instagram"))
 
         # Malicious domains must be rejected
         self.assertFalse(_is_allowed_redirect_uri("https://attacker.evil.com/callback"))

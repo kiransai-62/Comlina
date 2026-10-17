@@ -128,7 +128,8 @@ export default function DashboardOverviewPage() {
   const handleStartMetaOAuth = async () => {
     setIsConnectingMeta(true);
     try {
-      const res = await instagramApi.getConnectUrl();
+      const redirectUri = typeof window !== 'undefined' ? `${window.location.origin}/connect/instagram` : undefined;
+      const res = await instagramApi.getConnectUrl(redirectUri);
       if (res?.authorization_url) {
         window.location.href = res.authorization_url;
       } else {
