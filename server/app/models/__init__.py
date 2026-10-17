@@ -80,7 +80,7 @@ class InstagramAccount(Base):
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
-    __table_args__ = (UniqueConstraint("workspace_id", "ig_user_id", name="uq_workspace_ig_user"),)
+    __table_args__ = (UniqueConstraint("ig_user_id", name="uq_ig_accounts_ig_user_id"),)
 
     workspace = relationship("Workspace", back_populates="instagram_accounts")
     automations = relationship("Automation", back_populates="instagram_account")

@@ -68,33 +68,47 @@ function CallbackContent() {
       {status === 'error' && (
         <div className="space-y-4">
           <AlertCircle className="w-10 h-10 text-red-500 mx-auto" />
-          <h2 className="font-bold text-base text-[#111110]">Connection Failed</h2>
-          <div className="p-3 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 leading-relaxed font-medium text-left break-words">
+          <h2 className="font-bold text-base text-[#111110]">
+            {errorMessage.toLowerCase().includes('already') ? 'Instagram Account Already Registered' : 'Connection Failed'}
+          </h2>
+          <div className="p-3.5 bg-red-50 border border-red-200 rounded-xl text-xs text-red-700 leading-relaxed font-medium text-left break-words">
             {errorMessage || 'Failed to exchange authorization code with Meta.'}
           </div>
-          <p className="text-xs text-[#70706B]">
-            A Business or Creator Instagram account is required.
+          <p className="text-xs text-[#70706B] leading-relaxed">
+            {errorMessage.toLowerCase().includes('already') 
+              ? 'To protect account integrity, each Instagram account can only be linked to the initial Google or email account used for registration. Please sign in with your original account.'
+              : 'A Business or Creator Instagram account is required.'}
           </p>
           <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-2">
-            <button
-              type="button"
-              onClick={async () => {
-                try {
-                  const redirectUri = window.location.origin + '/connect/instagram';
-                  const resp = await instagramApi.getConnectUrl(redirectUri);
-                  if (resp?.authorization_url) {
-                    window.location.href = resp.authorization_url;
-                  } else {
+            {errorMessage.toLowerCase().includes('already') ? (
+              <button
+                type="button"
+                onClick={() => router.push('/login')}
+                className="w-full sm:w-auto px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+              >
+                Sign In with Original Account
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={async () => {
+                  try {
+                    const redirectUri = window.location.origin + '/connect/instagram';
+                    const resp = await instagramApi.getConnectUrl(redirectUri);
+                    if (resp?.authorization_url) {
+                      window.location.href = resp.authorization_url;
+                    } else {
+                      router.push('/dashboard/instagram-accounts');
+                    }
+                  } catch {
                     router.push('/dashboard/instagram-accounts');
                   }
-                } catch {
-                  router.push('/dashboard/instagram-accounts');
-                }
-              }}
-              className="w-full sm:w-auto px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
-            >
-              Try again
-            </button>
+                }}
+                className="w-full sm:w-auto px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
+              >
+                Try again
+              </button>
+            )}
             <button
               type="button"
               onClick={() => router.push('/dashboard/instagram-accounts')}

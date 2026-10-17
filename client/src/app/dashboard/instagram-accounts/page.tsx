@@ -92,17 +92,18 @@ export default function InstagramAccountsPage() {
     }
   };
 
-  const handleConnectDevAccount = async () => {
-    setIsAuthorizing(true);
+  const [syncingId, setSyncingId] = useState<string | null>(null);
+
+  const handleSync = async (id: string) => {
+    setSyncingId(id);
     try {
-      await instagramApi.connectDevAccount();
-      showToast('Instagram account @comlina_creator successfully connected!');
-      setIsConnectModalOpen(false);
+      await instagramApi.syncAccount(id);
+      showToast('Real-time profile and follower data successfully synced from Meta.');
       refetch();
     } catch (err: any) {
-      showToast(`Failed to connect dev account: ${err.message || err}`);
+      showToast(`Failed to sync account: ${err.message || err}`);
     } finally {
-      setIsAuthorizing(false);
+      setSyncingId(null);
     }
   };
 
@@ -180,21 +181,13 @@ export default function InstagramAccountsPage() {
             Connect your Instagram Business or Creator account to start automating comment responses and sending private DMs.
           </p>
 
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
+          <div className="flex items-center justify-center">
             <button
               onClick={handleStartConnect}
               className="inline-flex items-center gap-2 px-6 py-3 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-sm font-semibold rounded-lg shadow-md transition-all cursor-pointer"
             >
               <Plus size={16} />
               <span>Connect Instagram</span>
-            </button>
-            <button
-              onClick={handleConnectDevAccount}
-              disabled={isAuthorizing}
-              className="inline-flex items-center gap-2 px-5 py-3 bg-white hover:bg-neutral-50 text-neutral-800 border border-neutral-200 text-sm font-medium rounded-lg shadow-xs transition-all cursor-pointer"
-            >
-              <Zap size={15} className="text-[#15803D]" />
-              <span>Instant Connect Demo Account</span>
             </button>
           </div>
         </div>
@@ -224,9 +217,17 @@ export default function InstagramAccountsPage() {
                 <div className="flex items-center justify-between flex-wrap gap-4">
                   <div className="flex items-center gap-4">
                     <div className="relative">
-                      <div className="w-13 h-13 rounded-full bg-[#111110] text-white flex items-center justify-center font-bold text-base">
-                        {initials}
-                      </div>
+                      {acc.profile_pic_url ? (
+                        <img
+                          src={acc.profile_pic_url}
+                          alt={handle}
+                          className="w-13 h-13 rounded-full object-cover border border-[#ECECE8]"
+                        />
+                      ) : (
+                        <div className="w-13 h-13 rounded-full bg-[#111110] text-white flex items-center justify-center font-bold text-base">
+                          {initials}
+                        </div>
+                      )}
                       <div className="absolute -bottom-0.5 -right-0.5 w-5 h-5 rounded-full bg-gradient-to-tr from-[#f09433] to-[#bc1888] flex items-center justify-center border-2 border-white">
                         <Instagram size={10} className="text-white" strokeWidth={2.5} />
                       </div>
@@ -265,7 +266,16 @@ export default function InstagramAccountsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-3">
+                  <div className="flex items-center gap-2.5 flex-wrap">
+                    <button
+                      type="button"
+                      disabled={syncingId === acc.id}
+                      onClick={() => handleSync(acc.id)}
+                      className="inline-flex items-center gap-1.5 text-xs text-[#064125] bg-[#EAF6EE] hover:bg-[#D4EDDA] font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw size={12} className={syncingId === acc.id ? 'animate-spin' : ''} />
+                      <span>{syncingId === acc.id ? 'Syncing...' : 'Sync Real-Time Data'}</span>
+                    </button>
                     {!isActive && (
                       <button
                         type="button"
@@ -436,15 +446,7 @@ export default function InstagramAccountsPage() {
                     )}
                   </button>
 
-                  <button
-                    type="button"
-                    onClick={handleConnectDevAccount}
-                    disabled={isAuthorizing}
-                    className="w-full py-2.5 bg-neutral-100 hover:bg-neutral-200 text-neutral-800 text-xs font-semibold rounded-lg flex items-center justify-center gap-2 cursor-pointer transition-all"
-                  >
-                    <Zap size={14} className="text-[#15803D]" />
-                    <span>Instant Connect Demo Account (Dev)</span>
-                  </button>
+
 
                   <div className="bg-[#F8F9FA] border border-[#ECECE8] rounded-xl p-3 text-left space-y-2 mt-2">
                     <div className="flex items-center justify-between">

@@ -16,7 +16,7 @@ from sqlalchemy import select, func
 from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_current_workspace, require_workspace_owner, get_current_user
-from app.models import Workspace, InstagramAccount, Automation, User
+from app.models import Workspace, InstagramAccount, Automation, User, WorkspaceMember
 from app.schemas import InstagramAccountOut, ConnectAccountRequest, InstagramMediaPage
 from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
 from app.integrations.instagram.client import MetaGraphClient
@@ -231,17 +231,44 @@ async def handle_oauth_callback(
     follower_count = profile.get("followers_count") or 0
     profile_pic_url = profile.get("profile_picture_url")
 
-    # Check if account already exists for this workspace and ig_user_id
-    stmt = select(InstagramAccount).where(
-        InstagramAccount.workspace_id == workspace.id,
+    # 1. Enforce strict 1-to-1 mapping across the entire system:
+    # An Instagram account (ig_user_id) can ONLY link to the initial Google account used for registration.
+    stmt_global = select(InstagramAccount).where(
         InstagramAccount.ig_user_id == ig_user_id
     )
-    res = await db.execute(stmt)
-    account = res.scalar_one_or_none()
+    res_global = await db.execute(stmt_global)
+    existing_any = res_global.scalar_one_or_none()
+
+    if existing_any and existing_any.workspace_id != workspace.id:
+        # Retrieve original registering user's email for informative rejection
+        orig_user_stmt = (
+            select(User.email)
+            .join(WorkspaceMember, WorkspaceMember.user_id == User.id)
+            .where(WorkspaceMember.workspace_id == existing_any.workspace_id)
+            .limit(1)
+        )
+        orig_res = await db.execute(orig_user_stmt)
+        orig_email = orig_res.scalar_one_or_none()
+        email_hint = f" (linked to {orig_email[:3]}***@{orig_email.split('@')[-1]})" if orig_email else ""
+
+        logger.warning(
+            f"[SECURITY] Blocked link attempt: Instagram @{username} (ID {ig_user_id}) "
+            f"is already registered with workspace {existing_any.workspace_id}, rejected workspace {workspace.id}"
+        )
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=(
+                f"This Instagram account (@{username}) is already registered with another Comlina account{email_hint}. "
+                "An Instagram account can only be linked to the initial account used during registration. "
+                "Please sign in with your original account."
+            )
+        )
 
     encrypted_token = encrypt_token(access_token)
+    account = existing_any
 
     if account:
+        # Update existing account for the same owner with latest real-time profile info and fresh tokens
         account.username = username
         account.account_type = account_type
         account.follower_count = follower_count
@@ -249,6 +276,7 @@ async def handle_oauth_callback(
         account.token_expires_at = token_expires_at
         account.profile_pic_url = profile_pic_url
         account.is_active = True
+        account.updated_at = datetime.now(timezone.utc)
     else:
         # Enforce workspace account limit
         stmt_count = select(func.count(InstagramAccount.id)).where(
@@ -272,7 +300,9 @@ async def handle_oauth_callback(
             profile_pic_url=profile_pic_url,
             access_token_encrypted=encrypted_token,
             token_expires_at=token_expires_at,
-            is_active=True
+            is_active=True,
+            connected_at=datetime.now(timezone.utc),
+            updated_at=datetime.now(timezone.utc)
         )
         db.add(account)
 
@@ -366,6 +396,51 @@ async def refresh_account_token(
     account.access_token_encrypted = encrypt_token(new_token)
     account.token_expires_at = datetime.now(timezone.utc) + timedelta(seconds=expires_in)
     account.is_active = True
+
+    await db.commit()
+    await db.refresh(account)
+    return account
+
+@router.post("/accounts/{account_id}/sync", response_model=InstagramAccountOut)
+async def sync_instagram_account_profile(
+    account_id: uuid.UUID,
+    workspace: Workspace = Depends(require_workspace_owner),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Fetches real-time profile data (followers, handle, profile picture) from Meta Graph API
+    and updates the database.
+    """
+    stmt = select(InstagramAccount).where(
+        InstagramAccount.id == account_id,
+        InstagramAccount.workspace_id == workspace.id
+    )
+    res = await db.execute(stmt)
+    account = res.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    try:
+        current_token = decrypt_token(account.access_token_encrypted)
+    except Exception as e:
+        logger.error(f"Decryption failed for account {account.id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Token decryption failed. Please reconnect your Instagram account."
+        )
+
+    try:
+        profile = await MetaOAuth.fetch_instagram_profile(current_token)
+    except MetaOAuthError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+    account.username = profile.get("username") or account.username
+    account.account_type = profile.get("account_type") or account.account_type
+    if profile.get("followers_count") is not None:
+        account.follower_count = int(profile.get("followers_count"))
+    if profile.get("profile_picture_url"):
+        account.profile_pic_url = profile.get("profile_picture_url")
+    account.updated_at = datetime.now(timezone.utc)
 
     await db.commit()
     await db.refresh(account)

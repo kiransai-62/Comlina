@@ -154,14 +154,16 @@ export default function DashboardOverviewPage() {
               className={`inline-flex items-center gap-1.5 px-2.5 py-1 border rounded-full text-xs font-medium transition-all ${
                 isConnected 
                   ? 'bg-white border-[#ECECE8] text-[#333330]' 
+                  : loadingAccounts
+                  ? 'bg-[#F9F9F8] border-[#ECECE8] text-[#70706B]'
                   : 'bg-[#FEF3C7] border-[#F59E0B] text-[#92400E]'
               }`}
             >
-              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#22C55E]' : 'bg-[#D97706]'}`} />
-              <span>{isConnected ? `@${primaryAccount?.username}` : 'No Account Connected'}</span>
+              <span className={`w-2 h-2 rounded-full ${isConnected ? 'bg-[#22C55E]' : loadingAccounts ? 'bg-neutral-400 animate-pulse' : 'bg-[#D97706]'}`} />
+              <span>{isConnected ? `@${primaryAccount?.username}` : loadingAccounts ? 'Checking Account...' : 'No Account Connected'}</span>
               <span className="text-[#9E9E96]">•</span>
-              <span className={`font-semibold ${isConnected ? 'text-[#15803D]' : 'text-[#D97706]'}`}>
-                {isConnected ? 'Live' : 'Connect Required'}
+              <span className={`font-semibold ${isConnected ? 'text-[#15803D]' : loadingAccounts ? 'text-[#70706B]' : 'text-[#D97706]'}`}>
+                {isConnected ? 'Live' : loadingAccounts ? 'Loading...' : 'Connect Required'}
               </span>
             </div>
           </div>
@@ -186,7 +188,7 @@ export default function DashboardOverviewPage() {
               <Plus size={15} />
               <span>New Automation</span>
             </Link>
-          ) : (
+          ) : loadingAccounts ? null : (
             <button
               onClick={() => setIsConnectModalOpen(true)}
               className="inline-flex items-center gap-1.5 px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-sm transition-all cursor-pointer"
@@ -227,7 +229,13 @@ export default function DashboardOverviewPage() {
         </div>
       )}
 
-      {isConnected ? (
+      {loadingAccounts ? (
+        <div className="bg-white border border-[#ECECE8] rounded-2xl p-12 text-center shadow-xs space-y-3">
+          <div className="w-10 h-10 rounded-full border-3 border-[#EAF6EE] border-t-[#15803D] animate-spin mx-auto" />
+          <h3 className="text-sm font-bold text-[#111110]">Loading your workspace...</h3>
+          <p className="text-xs text-[#70706B]">Checking connected Instagram accounts and real-time metrics.</p>
+        </div>
+      ) : isConnected ? (
         <>
           {/* 2. Stats Overview Section Header */}
           <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
@@ -939,9 +947,6 @@ export default function DashboardOverviewPage() {
                     <ShieldCheck size={14} className="text-[#15803D]" />
                     <span>We use official Meta authentication. Your credentials are never stored.</span>
                   </div>
-                </div>
-              </div>
-            )}
                 </div>
               </div>
             )}

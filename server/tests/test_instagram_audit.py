@@ -266,6 +266,117 @@ class TestInstagramAudit(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(auto2.status, "PAUSED")
         mock_db.commit.assert_awaited_once()
 
+    async def test_strict_one_to_one_mapping_blocks_duplicate_instagram_registration(self):
+        """
+        Verify strict 1-to-1 mapping: An Instagram account cannot be linked to a second workspace/email.
+        If a user attempts to connect an already-linked Instagram account ID, HTTP 409 Conflict is raised.
+        """
+        from fastapi import HTTPException
+        from app.api.instagram import handle_oauth_callback
+        from app.schemas import ConnectAccountRequest
+        from app.models import User
+
+        ws_initial = Workspace(id=uuid.uuid4(), name="Initial WS", max_accounts=5)
+        ws_second = Workspace(id=uuid.uuid4(), name="Second WS", max_accounts=5)
+        user_second = User(id=uuid.uuid4(), email="new_user@example.com", full_name="New User")
+
+        existing_acc = InstagramAccount(
+            id=uuid.uuid4(),
+            workspace_id=ws_initial.id,
+            ig_user_id="17841499999999",
+            username="locked_brand",
+            access_token_encrypted="encrypted_tok",
+            is_active=True
+        )
+
+        mock_db = AsyncMock()
+        # Mock global account search finding existing_acc in initial workspace
+        acc_result = MagicMock()
+        acc_result.scalar_one_or_none.return_value = existing_acc
+
+        # Mock original user lookup
+        user_result = MagicMock()
+        user_result.scalar_one_or_none.return_value = "original_owner@example.com"
+
+        mock_db.execute.side_effect = [acc_result, user_result]
+
+        req = ConnectAccountRequest(
+            code="test_code_123",
+            state=generate_oauth_state(ws_second.id, user_second.id),
+            redirect_uri="http://localhost:3000/connect/instagram"
+        )
+
+        with patch("app.integrations.instagram.oauth.MetaOAuth.exchange_code_for_token", new_callable=AsyncMock) as mock_exchange, \
+             patch("app.integrations.instagram.oauth.MetaOAuth.exchange_for_long_lived_token", new_callable=AsyncMock) as mock_long, \
+             patch("app.integrations.instagram.oauth.MetaOAuth.fetch_instagram_profile", new_callable=AsyncMock) as mock_profile:
+
+            mock_exchange.return_value = {"access_token": "short_tok"}
+            mock_long.return_value = {"access_token": "long_tok", "expires_in": 5184000}
+            mock_profile.return_value = {
+                "id": "17841499999999",
+                "user_id": "17841499999999",
+                "username": "locked_brand",
+                "account_type": "BUSINESS",
+                "followers_count": 50000
+            }
+
+            with self.assertRaises(HTTPException) as ctx:
+                await handle_oauth_callback(
+                    data=req,
+                    user=user_second,
+                    workspace=ws_second,
+                    db=mock_db
+                )
+
+            self.assertEqual(ctx.exception.status_code, 409)
+            self.assertIn("already registered", ctx.exception.detail)
+            self.assertIn("@locked_brand", ctx.exception.detail)
+
+    async def test_real_time_profile_sync(self):
+        """
+        Verify sync_instagram_account_profile fetches live metrics from Meta and updates the database.
+        """
+        from app.api.instagram import sync_instagram_account_profile
+        from app.core.encryption import encrypt_token
+
+        ws_id = uuid.uuid4()
+        workspace = Workspace(id=ws_id, name="Test WS")
+        acc_id = uuid.uuid4()
+        account = InstagramAccount(
+            id=acc_id,
+            workspace_id=ws_id,
+            ig_user_id="178414000123",
+            username="old_handle",
+            follower_count=100,
+            access_token_encrypted=encrypt_token("EAAG_valid_token"),
+            is_active=True
+        )
+
+        mock_db = AsyncMock()
+        res_mock = MagicMock()
+        res_mock.scalar_one_or_none.return_value = account
+        mock_db.execute.return_value = res_mock
+
+        with patch("app.integrations.instagram.oauth.MetaOAuth.fetch_instagram_profile", new_callable=AsyncMock) as mock_profile:
+            mock_profile.return_value = {
+                "username": "new_updated_handle",
+                "account_type": "BUSINESS",
+                "followers_count": 25400,
+                "profile_picture_url": "https://cdn.instagram.com/pic.jpg"
+            }
+
+            updated = await sync_instagram_account_profile(
+                account_id=acc_id,
+                workspace=workspace,
+                db=mock_db
+            )
+
+            self.assertEqual(updated.username, "new_updated_handle")
+            self.assertEqual(updated.follower_count, 25400)
+            self.assertEqual(updated.profile_pic_url, "https://cdn.instagram.com/pic.jpg")
+            mock_db.commit.assert_awaited_once()
+
 
 if __name__ == "__main__":
     unittest.main()
+

@@ -58,6 +58,7 @@ export const instagramApi = {
     ),
   callback: (code: string, state?: string, redirectUri?: string) => 
     api.post<ConnectedInstagramAccount>('/instagram/oauth/callback', { code, state, redirect_uri: redirectUri }),
+  syncAccount: (id: string) => api.post<ConnectedInstagramAccount>(`/instagram/accounts/${id}/sync`),
   connectDevAccount: () => api.post<ConnectedInstagramAccount>('/instagram/connect-dev-account'),
   disconnect: (id: string) => api.delete<void>(`/instagram/accounts/${id}`)
 };

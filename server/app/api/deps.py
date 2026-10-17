@@ -55,12 +55,31 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    email = token_data.get("email") or f"{user_uuid}@comlina.ai"
+    user_meta = token_data.get("user_metadata") or {}
+    full_name = user_meta.get("full_name") or user_meta.get("name") or email.split("@")[0]
+    avatar_url = user_meta.get("avatar_url") or user_meta.get("picture")
+
     # First try a fast non-locked lookup
     stmt = select(User).where(User.id == user_uuid)
     res = await db.execute(stmt)
     user = res.scalars().first()
 
     if user:
+        # Save and update any changed details from the login token
+        updated = False
+        if email and user.email != email:
+            user.email = email
+            updated = True
+        if full_name and user.full_name != full_name and not (user.timezone and user.timezone.startswith("pbkdf2:")):
+            user.full_name = full_name
+            updated = True
+        if avatar_url and user.avatar_url != avatar_url:
+            user.avatar_url = avatar_url
+            updated = True
+        if updated:
+            await db.commit()
+            await db.refresh(user)
         return user
 
     # User doesn't exist yet — acquire lock to safely provision
@@ -71,14 +90,11 @@ async def get_current_user(
         if user:
             return user
 
-        email = token_data.get("email") or f"{user_uuid}@comlina.ai"
-        user_meta = token_data.get("user_metadata") or {}
-        full_name = user_meta.get("full_name") or user_meta.get("name") or email.split("@")[0]
-
         user = User(
             id=user_uuid,
             email=email,
-            full_name=full_name
+            full_name=full_name,
+            avatar_url=avatar_url
         )
         db.add(user)
 
