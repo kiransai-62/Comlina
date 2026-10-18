@@ -5,7 +5,7 @@ import os
 import logging
 from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response, Request
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
@@ -18,6 +18,45 @@ from app.models import User, Workspace, WorkspaceMember
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
+
+
+# ---------- Cookie Management ----------
+
+def set_auth_cookies(response: Response, access_token: str, refresh_token: Optional[str] = None) -> None:
+    """Sets secure, HttpOnly session and refresh cookies."""
+    is_prod = settings.ENVIRONMENT != "development"
+    # SameSite=None allows cross-subdomain credentials (e.g. comlina.onrender.com -> comlina-api.onrender.com)
+    samesite = "none" if is_prod else "lax"
+    secure = True if is_prod else False
+
+    response.set_cookie(
+        key="comlina_token",
+        value=access_token,
+        httponly=True,
+        secure=secure,
+        samesite=samesite,
+        max_age=7 * 24 * 3600,  # 7 days
+        path="/",
+    )
+    if refresh_token:
+        response.set_cookie(
+            key="comlina_refresh_token",
+            value=refresh_token,
+            httponly=True,
+            secure=secure,
+            samesite=samesite,
+            max_age=30 * 24 * 3600,  # 30 days
+            path="/",
+        )
+
+
+def clear_auth_cookies(response: Response) -> None:
+    """Clears all session and refresh cookies."""
+    is_prod = settings.ENVIRONMENT != "development"
+    samesite = "none" if is_prod else "lax"
+    secure = True if is_prod else False
+    response.delete_cookie(key="comlina_token", path="/", samesite=samesite, secure=secure)
+    response.delete_cookie(key="comlina_refresh_token", path="/", samesite=samesite, secure=secure)
 
 
 # ---------- Schemas ----------
@@ -34,7 +73,7 @@ class LoginRequest(BaseModel):
 
 
 class RefreshRequest(BaseModel):
-    refresh_token: str
+    refresh_token: Optional[str] = None
 
 
 class TokenRefreshResponse(BaseModel):
@@ -126,10 +165,15 @@ async def _ensure_default_workspace(user: User, db: AsyncSession) -> Optional[Wo
 # ---------- Endpoints ----------
 
 @router.post("/signup", response_model=AuthResponse)
-async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
+async def signup(
+    body: SignupRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Register a new user with email + password.
     Returns a signed JWT and the provisioned default workspace.
+    Sets secure HttpOnly session cookies.
     """
     email = body.email.strip().lower()
     password = body.password
@@ -159,9 +203,6 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
         email=email,
         full_name=full_name,
     )
-    # Store password hash in the User's metadata (using avatar_url field temporarily
-    # since the schema doesn't have a password column — a proper migration should add one)
-    # For now we use a convention: timezone field stores "pbkdf2:<salt>:<hash>"
     user.timezone = f"pbkdf2:{pw_salt}:{pw_hash}"
 
     db.add(user)
@@ -174,6 +215,9 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
     # Issue JWT access & refresh tokens
     token = create_backend_jwt(str(user_id), email, token_type="access")
     refresh_token = create_backend_jwt(str(user_id), email, token_type="refresh")
+
+    # Set secure persistent cookies
+    set_auth_cookies(response, token, refresh_token)
 
     logger.info(f"[AUTH] New user registered: {email} ({user_id})")
 
@@ -198,10 +242,15 @@ async def signup(body: SignupRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/login", response_model=AuthResponse)
-async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
+async def login(
+    body: LoginRequest,
+    response: Response,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Authenticate with email + password against the backend user store.
     Returns a signed JWT and the user's workspace.
+    Sets secure HttpOnly session cookies.
     """
     email = body.email.strip().lower()
     password = body.password
@@ -243,6 +292,9 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
     token = create_backend_jwt(str(user.id), email, token_type="access")
     refresh_token = create_backend_jwt(str(user.id), email, token_type="refresh")
 
+    # Set secure persistent cookies
+    set_auth_cookies(response, token, refresh_token)
+
     logger.info(f"[AUTH] User logged in: {email}")
 
     ws_data = None
@@ -266,12 +318,23 @@ async def login(body: LoginRequest, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/refresh", response_model=TokenRefreshResponse)
-async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depends(get_db)):
+async def refresh_token_endpoint(
+    request: Request,
+    response: Response,
+    body: Optional[RefreshRequest] = None,
+    db: AsyncSession = Depends(get_db)
+):
     """
     Refreshes an expired or active access token using a valid backend refresh token.
-    Validates token signature, token_type == 'refresh', and that the user account still exists.
+    Accepts refresh token from request body or HttpOnly cookie.
+    Rotates tokens and updates session cookies.
     """
-    token = body.refresh_token.strip()
+    token = None
+    if body and body.refresh_token:
+        token = body.refresh_token.strip()
+    if not token:
+        token = request.cookies.get("comlina_refresh_token")
+
     if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -287,12 +350,14 @@ async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depend
             options={"verify_aud": False},
         )
     except pyjwt.ExpiredSignatureError:
+        clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Refresh token has expired. Please sign in again.",
             headers={"WWW-Authenticate": "Bearer"},
         )
     except pyjwt.PyJWTError:
+        clear_auth_cookies(response)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid refresh token",
@@ -333,6 +398,7 @@ async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depend
         res_email = await db.execute(stmt_email)
         user = res_email.scalars().first()
         if not user:
+            clear_auth_cookies(response)
             raise HTTPException(
                 status_code=status.HTTP_401_UNAUTHORIZED,
                 detail="User account no longer exists",
@@ -342,6 +408,9 @@ async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depend
     new_access = create_backend_jwt(str(user.id), user.email, token_type="access")
     new_refresh = create_backend_jwt(str(user.id), user.email, token_type="refresh")
 
+    # Rotate cookies atomically
+    set_auth_cookies(response, new_access, new_refresh)
+
     return TokenRefreshResponse(
         access_token=new_access,
         refresh_token=new_refresh,
@@ -349,15 +418,27 @@ async def refresh_token_endpoint(body: RefreshRequest, db: AsyncSession = Depend
     )
 
 
+@router.post("/logout")
+async def logout(response: Response):
+    """Sign out user and clear session cookies."""
+    clear_auth_cookies(response)
+    return {"status": "ok", "message": "Signed out successfully"}
+
+
 @router.get("/me")
 async def get_current_profile(
+    response: Response,
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_current_workspace),
 ) -> Dict[str, Any]:
     """
     Returns the authenticated user's profile and active workspace.
-    Used by AuthGuard to bootstrap the frontend session.
+    Used by AuthGuard to bootstrap the frontend session and refresh cookies.
     """
+    access_token = create_backend_jwt(str(user.id), user.email, token_type="access")
+    refresh_token = create_backend_jwt(str(user.id), user.email, token_type="refresh")
+    set_auth_cookies(response, access_token, refresh_token)
+
     return {
         "id": str(user.id),
         "email": user.email,
@@ -372,6 +453,10 @@ async def get_current_profile(
             "plan_status": workspace.plan_status or "ACTIVE",
             "max_automations": workspace.max_automations,
             "max_accounts": workspace.max_accounts,
+        },
+        "session": {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
         },
     }
 

@@ -68,9 +68,6 @@ class ApiClient {
 
     if (token) {
       headers['Authorization'] = `Bearer ${token}`;
-    } else if (AUTH_ENABLED) {
-      // Token not available yet - throw ApiError rather than immediately destroying page state
-      throw new ApiError('Authentication required', 401);
     }
 
     if (this.activeWorkspaceId) {
@@ -86,6 +83,7 @@ class ApiClient {
 
     try {
       const response = await fetch(url, {
+        credentials: 'include',
         ...options,
         signal: options.signal || controller.signal,
         headers,
@@ -97,7 +95,7 @@ class ApiClient {
           // If request was already retried once with a refreshed token, give up and sign out
           if ((options as any)._isRetry) {
             const pathname = window.location.pathname;
-            if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
+            if (!pathname.startsWith('/login') && !pathname.startsWith('/signup') && !endpoint.includes('auth/')) {
               await authService.signOut();
               return null as unknown as T;
             }
@@ -145,18 +143,16 @@ class ApiClient {
               } as RequestInit);
             } else {
               const pathname = window.location.pathname;
-              if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
+              if (!pathname.startsWith('/login') && !pathname.startsWith('/signup') && !endpoint.includes('auth/')) {
                 await authService.signOut();
                 return null as unknown as T;
               }
             }
-          } catch {
+          } catch (refreshErr) {
             this.onTokenRefreshed(null);
-            const pathname = window.location.pathname;
-            if (!pathname.startsWith('/login') && !pathname.startsWith('/signup')) {
-              await authService.signOut();
-              return null as unknown as T;
-            }
+            // Network failure or temporary server issue during token refresh:
+            // Do NOT sign out immediately. Throw ApiError so caller can handle gracefully.
+            throw new ApiError('Network error while refreshing session.', 0, refreshErr);
           } finally {
             this.isRefreshing = false;
           }

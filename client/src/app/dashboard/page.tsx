@@ -74,13 +74,15 @@ export default function DashboardOverviewPage() {
     isConnected,
     isChecking: loadingAccounts,
     needsReauth,
+    isUnavailable,
+    isNotConnected,
     isError: errorAccounts,
     error: accountsError,
     refetch: refetchAccounts,
     startConnect: handleStartMetaOAuth,
   } = useInstagramConnection();
 
-  const hasAccounts = accounts && accounts.length > 0;
+  const hasAccounts = isConnected && accounts && accounts.length > 0;
 
   const { 
     data: summary, 
@@ -269,7 +271,9 @@ export default function DashboardOverviewPage() {
 
       {loadingAccounts && <ComlinaLoadingOverlay isLoading={true} />}
 
-      {hasAccounts ? (
+      {loadingAccounts ? (
+        <div className="min-h-[400px]" />
+      ) : hasAccounts ? (
         <>
           {/* 2. Stats Overview Section Header */}
           <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
@@ -595,6 +599,20 @@ export default function DashboardOverviewPage() {
           {/* 3. Middle Row: Live Recent Conversations + Performance Overview */}
           <LivePerformanceAndConversations />
         </>
+      ) : isUnavailable ? (
+        <div className="min-h-[300px] flex flex-col items-center justify-center p-8 text-center bg-white border border-[#ECECE8] rounded-2xl shadow-xs">
+          <RefreshCw size={28} className="text-[#9E9E96] animate-spin mb-3" />
+          <h3 className="text-sm font-bold text-[#111110]">Connection check in progress</h3>
+          <p className="text-xs text-[#70706B] max-w-sm mt-1 mb-4">
+            We could not verify your Instagram connection due to a temporary network issue. Your saved connection and automations remain intact.
+          </p>
+          <button
+            onClick={() => refetchAccounts()}
+            className="px-4 py-2 bg-[#064125] hover:bg-[#0A5A34] text-white text-xs font-semibold rounded-xl shadow-xs transition-all cursor-pointer"
+          >
+            Retry Connection Check
+          </button>
+        </div>
       ) : (
         /* ── Not Connected State: Desktop, Tablet, Mobile (Image 2 Alignment) ── */
         <div className="space-y-6">

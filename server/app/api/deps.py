@@ -3,7 +3,7 @@ import asyncio
 import uuid
 import logging
 from typing import Optional
-from fastapi import Depends, HTTPException, Header, status
+from fastapi import Depends, HTTPException, Header, status, Request
 from fastapi.security import HTTPAuthorizationCredentials
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.exc import IntegrityError
@@ -21,22 +21,31 @@ logger = logging.getLogger(__name__)
 _provision_lock = asyncio.Lock()
 
 async def get_current_user(
+    request: Request,
     auth_header: Optional[HTTPAuthorizationCredentials] = Depends(security_bearer),
     db: AsyncSession = Depends(get_db)
 ) -> User:
     """
     Authenticates request via Supabase Auth JWT or backend-issued JWT.
+    Supports Authorization Bearer header and secure HttpOnly cookies.
     Resolves or initializes user record in Comlina database.
     Uses asyncio.Lock + IntegrityError recovery to handle concurrent first-login requests.
     """
-    if not auth_header or not auth_header.credentials:
+    token = None
+    if auth_header and auth_header.credentials:
+        token = auth_header.credentials
+    elif request.cookies.get("comlina_token"):
+        token = request.cookies.get("comlina_token")
+    elif request.cookies.get("comlina_session"):
+        token = request.cookies.get("comlina_session")
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Missing authorization header",
+            detail="Missing authorization credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
     
-    token = auth_header.credentials
     token_data = decode_supabase_jwt(token)
     user_id_str = token_data.get("sub")
     if not user_id_str:
@@ -139,6 +148,7 @@ async def get_current_workspace(
         select(Workspace)
         .join(WorkspaceMember, Workspace.id == WorkspaceMember.workspace_id)
         .where(WorkspaceMember.user_id == user.id)
+        .order_by(Workspace.created_at.asc())
     )
 
     if x_workspace_id:
@@ -159,6 +169,7 @@ async def get_current_workspace(
         select(Workspace)
         .join(WorkspaceMember, Workspace.id == WorkspaceMember.workspace_id)
         .where(WorkspaceMember.user_id == user.id)
+        .order_by(Workspace.created_at.asc())
         .limit(1)
     )
     res_first = await db.execute(stmt_first)

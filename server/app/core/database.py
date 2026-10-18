@@ -1,8 +1,9 @@
 # server/app/core/database.py
+import asyncio
 import socket
 import logging
 from pathlib import Path
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Optional
 from urllib.parse import urlparse
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
@@ -30,23 +31,37 @@ def _is_service_reachable(url_str: str) -> bool:
     except Exception:
         return False
 
+def normalize_async_database_url(url: str) -> str:
+    """Normalize postgres:// or postgresql:// to postgresql+asyncpg://."""
+    if not url:
+        return url
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://"):]
+    elif url.startswith("postgresql://") and not url.startswith("postgresql+"):
+        return "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
+
 def resolve_database_url(configured_url: str, environment: str) -> str:
-    """Resolve configured database URL, falling back to SQLite in development if PostgreSQL is unreachable."""
-    if environment == "development" and "postgresql" in configured_url:
-        parsed = urlparse(configured_url.replace("postgresql+asyncpg://", "http://").replace("postgresql://", "http://"))
+    """
+    Resolve configured database URL, ensuring asyncpg dialect and preventing
+    accidental SQLite fallback in production.
+    """
+    normalized = normalize_async_database_url(configured_url)
+    if environment == "development" and "postgresql" in normalized:
+        parsed = urlparse(normalized.replace("postgresql+asyncpg://", "http://"))
         host = (parsed.hostname or "localhost").lower()
-        if host in ("localhost", "127.0.0.1", "0.0.0.0") and not _is_service_reachable(configured_url):
+        if host in ("localhost", "127.0.0.1", "0.0.0.0") and not _is_service_reachable(normalized):
             logger.warning("[DEV] Local PostgreSQL is not reachable on port 5432. Falling back to SQLite development database: %s", SQLITE_DEV_PATH)
             return SQLITE_DEV_URL
-    return configured_url
+    return normalized
 
 def get_engine_args(db_url: str):
     """Sanitize URL and configure production connection pooling and SSL for asyncpg."""
-    cleaned_url = db_url
+    cleaned_url = normalize_async_database_url(db_url)
     connect_args = {}
 
-    if "postgresql" in db_url:
-        parsed = urlparse(db_url.replace("postgresql+asyncpg://", "http://").replace("postgresql://", "http://"))
+    if "postgresql" in cleaned_url:
+        parsed = urlparse(cleaned_url.replace("postgresql+asyncpg://", "http://"))
         host = (parsed.hostname or "").lower()
         query = parsed.query.lower()
 
@@ -64,7 +79,7 @@ def get_engine_args(db_url: str):
 
         # Strip sslmode/ssl query parameter from asyncpg URL to prevent TypeError in asyncpg.connect()
         import re
-        cleaned_url = re.sub(r'([?&])sslmode=[^&]*(&)?', r'\1', db_url)
+        cleaned_url = re.sub(r'([?&])sslmode=[^&]*(&)?', r'\1', cleaned_url)
         cleaned_url = re.sub(r'([?&])ssl=[^&]*(&)?', r'\1', cleaned_url)
         cleaned_url = cleaned_url.rstrip('?&')
 
@@ -105,12 +120,64 @@ AsyncSessionLocal = async_sessionmaker(
     class_=AsyncSession
 )
 
+async def _apply_schema_patches(conn) -> None:
+    """Idempotently add newly added columns across both PostgreSQL and SQLite without data loss."""
+    from sqlalchemy import text
+    try:
+        # Check dialect
+        dialect_name = engine.dialect.name
+        if dialect_name == "postgresql":
+            await conn.execute(text("""
+                ALTER TABLE instagram_accounts
+                ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                ADD COLUMN IF NOT EXISTS auth_method VARCHAR(64) NOT NULL DEFAULT 'META_INSTAGRAM_OAUTH',
+                ADD COLUMN IF NOT EXISTS connection_status VARCHAR(32) NOT NULL DEFAULT 'CONNECTED',
+                ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64);
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
+        elif dialect_name == "sqlite":
+            res = await conn.execute(text("PRAGMA table_info(instagram_accounts)"))
+            existing_cols = {row[1] for row in res.fetchall()}
+            if "user_id" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN user_id TEXT"))
+            if "auth_method" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN auth_method TEXT DEFAULT 'META_INSTAGRAM_OAUTH'"))
+            if "connection_status" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN connection_status TEXT DEFAULT 'CONNECTED'"))
+            if "last_validated_at" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_validated_at TIMESTAMP"))
+            if "last_refreshed_at" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_refreshed_at TIMESTAMP"))
+            if "last_error_code" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error_code TEXT"))
+    except Exception as patch_err:
+        logger.debug(f"[DB] Schema patch check notice: {patch_err}")
+
+_initialized = False
+_init_lock: Optional[asyncio.Lock] = None
+
+async def _ensure_db_initialized() -> None:
+    global _initialized, _init_lock
+    if not _initialized:
+        if _init_lock is None:
+            _init_lock = asyncio.Lock()
+        async with _init_lock:
+            if not _initialized:
+                await init_db()
+                _initialized = True
+
 async def init_db() -> None:
-    """Ensure database tables exist (particularly in dev or sqlite mode)."""
+    """Ensure database tables exist and schema patches are applied."""
+    global _initialized
     try:
         import app.models  # noqa: F401 - ensure models are registered
         async with engine.begin() as conn:
             await conn.run_sync(Base.metadata.create_all)
+            await _apply_schema_patches(conn)
+        _initialized = True
         logger.info("[DB] Database schema checked/initialized successfully.")
     except Exception as e:
         logger.error(f"[DB] Error initializing database schema: {e}")
@@ -118,6 +185,7 @@ async def init_db() -> None:
 from contextlib import asynccontextmanager
 
 async def get_db() -> AsyncGenerator[AsyncSession, None]:
+    await _ensure_db_initialized()
     async with AsyncSessionLocal() as session:
         try:
             yield session
@@ -126,6 +194,7 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 @asynccontextmanager
 async def get_db_session() -> AsyncGenerator[AsyncSession, None]:
+    await _ensure_db_initialized()
     session = AsyncSessionLocal()
     try:
         yield session

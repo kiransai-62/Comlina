@@ -1,6 +1,6 @@
 // client/features/instagram/api.ts
 import { api } from '@/lib/api';
-import { ConnectedInstagramAccount } from './types';
+import { ConnectedInstagramAccount, InstagramConnectionStatusResponse } from './types';
 
 export interface InstagramMediaApiItem {
   id: string;
@@ -52,6 +52,8 @@ export const instagramApi = {
     }
   },
   listAccounts: () => api.get<ConnectedInstagramAccount[]>('/instagram/accounts', { timeout: 30000 }),
+  getConnectionStatus: () => api.get<InstagramConnectionStatusResponse>('/instagram/connection-status', { timeout: 30000 }),
+  refreshToken: (id: string) => api.post<ConnectedInstagramAccount>(`/instagram/accounts/${id}/refresh-token`, undefined, { timeout: 45000 }),
   getConnectUrl: (redirectUri?: string) => 
     api.get<{ authorization_url: string; state: string }>(
       redirectUri ? `/instagram/oauth/connect-url?redirect_uri=${encodeURIComponent(redirectUri)}` : '/instagram/oauth/connect-url',

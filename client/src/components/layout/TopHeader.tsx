@@ -55,7 +55,7 @@ export function TopHeader() {
     loadUser();
   }, []);
 
-  const { primaryAccount, isConnected, isChecking, needsReauth } = useInstagramConnection();
+  const { primaryAccount, isConnected, isChecking, needsReauth, isUnavailable } = useInstagramConnection();
 
   const displayName = user?.fullName || (user?.email ? user.email.split('@')[0] : 'Creator');
   const displayEmail = user?.email || 'No email registered';
@@ -119,6 +119,8 @@ export function TopHeader() {
               ? 'bg-[#15803D]' 
               : isChecking 
               ? 'bg-neutral-400 animate-pulse' 
+              : isUnavailable 
+              ? 'bg-amber-400 animate-pulse'
               : needsReauth 
               ? 'bg-[#D97706]' 
               : 'bg-[#D97706]'
@@ -128,6 +130,8 @@ export function TopHeader() {
               ? `@${primaryAccount?.username}` 
               : isChecking 
               ? 'Checking...' 
+              : isUnavailable 
+              ? 'Connecting...'
               : needsReauth 
               ? `@${primaryAccount?.username || 'Account'} (Reconnect)` 
               : 'No Account'}

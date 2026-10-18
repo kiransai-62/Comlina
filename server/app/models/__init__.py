@@ -68,6 +68,7 @@ class InstagramAccount(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     ig_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
     username: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     account_type: Mapped[str] = mapped_column(String(32), default="BUSINESS")
@@ -76,6 +77,11 @@ class InstagramAccount(Base):
     access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
     token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    auth_method: Mapped[str] = mapped_column(String(64), default="META_INSTAGRAM_OAUTH")
+    connection_status: Mapped[str] = mapped_column(String(32), default="CONNECTED", index=True)
+    last_validated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_refreshed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
+    last_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     permissions: Mapped[Any] = mapped_column(JSONType, default=["instagram_manage_messages", "instagram_manage_comments"])
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
@@ -83,6 +89,7 @@ class InstagramAccount(Base):
     __table_args__ = (UniqueConstraint("ig_user_id", name="uq_ig_accounts_ig_user_id"),)
 
     workspace = relationship("Workspace", back_populates="instagram_accounts")
+    user = relationship("User")
     automations = relationship("Automation", back_populates="instagram_account")
 
 

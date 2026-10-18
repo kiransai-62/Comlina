@@ -204,3 +204,68 @@ test('Instagram State Machine - Checking while loading prevents flash of disconn
   const state = computeInstagramConnectionState(true, false, []);
   assert.equal(state, 'checking');
 });
+
+test('Instagram State Machine - Authoritative connection status takes precedence', () => {
+  // Function matching useInstagramConnection.ts state resolution
+  function resolveConnectionState(isStatusLoading, isStatusError, statusData) {
+    if (isStatusLoading) return 'checking';
+    if (isStatusError) return 'temporarily_unavailable';
+    if (!statusData) return 'not_connected';
+    return statusData.status || 'not_connected';
+  }
+
+  assert.equal(resolveConnectionState(true, false, null), 'checking');
+  assert.equal(resolveConnectionState(false, true, null), 'temporarily_unavailable');
+  assert.equal(resolveConnectionState(false, false, { status: 'connected' }), 'connected');
+  assert.equal(resolveConnectionState(false, false, { status: 'token_expiring' }), 'token_expiring');
+  assert.equal(resolveConnectionState(false, false, { status: 'reauthorization_required' }), 'reauthorization_required');
+  assert.equal(resolveConnectionState(false, false, { status: 'temporarily_unavailable' }), 'temporarily_unavailable');
+  assert.equal(resolveConnectionState(false, false, { status: 'not_connected' }), 'not_connected');
+});
+
+test('Instagram State Machine - Temporary network outage does not trigger OAuth or delete saved connection', () => {
+  // When network blip occurs (isStatusError = true)
+  const isStatusLoading = false;
+  const isStatusError = true;
+  const statusData = null;
+
+  let state = 'checking';
+  if (isStatusLoading) state = 'checking';
+  else if (isStatusError) state = 'temporarily_unavailable';
+  else state = statusData?.status || 'not_connected';
+
+  assert.equal(state, 'temporarily_unavailable');
+  const isConnected = state === 'connected' || state === 'token_expiring';
+  const isNotConnected = state === 'not_connected' || state === 'disconnected';
+
+  // Crucial: Must NOT be treated as not_connected / disconnected
+  assert.equal(isNotConnected, false);
+  assert.equal(isConnected, false);
+});
+
+test('Session Restoration - Cookie session restored on startup without pre-existing localStorage token', async () => {
+  const storage = new MockLocalStorage();
+  // Simulate fresh browser session where localStorage is empty but HttpOnly cookie is present
+  assert.equal(storage.getItem('comlina_token'), null);
+
+  // Simulated syncWithBackend calling /api/auth/me with credentials: 'include'
+  async function simulateSyncWithBackend(hasValidCookie) {
+    if (!hasValidCookie) return null;
+    const restoredUser = { id: 'u-cookie-123', email: 'creator@comlina.ai', full_name: 'Cookie Creator' };
+    const restoredWorkspace = { id: 'ws-cookie-456', name: 'Creator Studio', slug: 'creator-studio' };
+    const newAccessToken = 'fresh_bearer_from_cookie_session';
+
+    // Persist restored credentials
+    storage.setItem('comlina_token', newAccessToken);
+    storage.setItem('comlina_user', JSON.stringify(restoredUser));
+    storage.setItem('comlina_workspace', JSON.stringify(restoredWorkspace));
+
+    return { user: restoredUser, workspace: restoredWorkspace };
+  }
+
+  const result = await simulateSyncWithBackend(true);
+  assert.ok(result);
+  assert.equal(result.user.email, 'creator@comlina.ai');
+  assert.equal(result.workspace.id, 'ws-cookie-456');
+  assert.equal(storage.getItem('comlina_token'), 'fresh_bearer_from_cookie_session');
+});

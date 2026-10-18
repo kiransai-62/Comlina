@@ -27,6 +27,7 @@ class InstagramAccountOut(BaseModel):
 
     id: uuid.UUID
     workspace_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
     ig_user_id: str
     username: str
     account_type: str
@@ -34,8 +35,35 @@ class InstagramAccountOut(BaseModel):
     profile_pic_url: Optional[str] = None
     token_expires_at: Optional[datetime] = None
     is_active: bool
+    auth_method: Optional[str] = "META_INSTAGRAM_OAUTH"
+    connection_status: Optional[str] = "CONNECTED"
+    last_validated_at: Optional[datetime] = None
+    last_refreshed_at: Optional[datetime] = None
+    last_error_code: Optional[str] = None
     connected_at: datetime
     status: Optional[str] = "CONNECTED"
+
+class InstagramAccountSummary(BaseModel):
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    user_id: Optional[uuid.UUID] = None
+    ig_user_id: str
+    username: str
+    account_type: str
+    follower_count: int
+    profile_pic_url: Optional[str] = None
+    token_expires_at: Optional[datetime] = None
+    connected_at: datetime
+    last_validated_at: Optional[datetime] = None
+    last_refreshed_at: Optional[datetime] = None
+
+class InstagramConnectionStatusResponse(BaseModel):
+    status: str # "connected" | "not_connected" | "token_expiring" | "reauthorization_required" | "temporarily_unavailable"
+    account: Optional[InstagramAccountSummary] = None
+    requires_reconnect: bool = False
+    requires_connect: bool = False
+    error_code: Optional[str] = None
+    message: str
 
 class ConnectAccountRequest(BaseModel):
     code: str = Field(..., min_length=1, max_length=1024)

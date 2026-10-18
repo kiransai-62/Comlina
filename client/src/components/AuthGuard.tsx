@@ -56,27 +56,9 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
           }
         }
 
-        // --- Step 2: Check if we have a valid token (Supabase or backend) ---
-        let hasToken = await authService.isAuthenticated();
-
-        if (!hasToken) {
-          // Attempt proactive refresh before declaring unauthenticated
-          const refreshed = await authService.refreshToken();
-          if (refreshed) {
-            hasToken = true;
-          }
-        }
-
-        if (!hasToken) {
-          if (mounted) {
-            setAuthState('unauthenticated');
-            router.replace('/login');
-          }
-          return;
-        }
-
-        // --- Step 3: Bootstrap with backend — provision user + workspace via GET /api/auth/me ---
+        // --- Step 2: Bootstrap session with backend via GET /api/auth/me (supports HttpOnly cookies & Bearer tokens) ---
         const syncResult = await authService.syncWithBackend();
+
         if (syncResult?.workspace) {
           api.setWorkspaceId(syncResult.workspace.id);
           const tier = (syncResult.workspace as any).plan_tier || (syncResult.workspace as any).planTier || 'FREE';
@@ -86,17 +68,38 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
             slug: syncResult.workspace.slug,
             planTier: tier,
           });
+          if (mounted) {
+            setAuthState('authenticated');
+          }
+          return;
         }
 
+        // If syncResult was null, check whether user has cached credentials
+        const hasCachedUser = typeof window !== 'undefined' && (
+          !!localStorage.getItem('comlina_user') || !!localStorage.getItem('comlina_token')
+        );
+
+        if (hasCachedUser) {
+          // Cached user exists but backend sync was unreachable or errored - do not redirect to login!
+          if (mounted) {
+            setAuthState('error');
+            setErrorMessage('Unable to reach authentication server. Please check your connection.');
+          }
+          return;
+        }
+
+        // No valid session or cookies - redirect to login
         if (mounted) {
-          setAuthState('authenticated');
+          setAuthState('unauthenticated');
+          router.replace('/login');
         }
       } catch (err: any) {
         console.error('AuthGuard session verification error:', err);
         if (mounted) {
-          // If token exists but network/server error, do not aggressively wipe credentials
-          const hasToken = await authService.isAuthenticated();
-          if (hasToken) {
+          const hasCachedUser = typeof window !== 'undefined' && (
+            !!localStorage.getItem('comlina_user') || !!localStorage.getItem('comlina_token')
+          );
+          if (hasCachedUser) {
             setAuthState('error');
             setErrorMessage('Unable to reach authentication server. Please check your connection.');
           } else {
