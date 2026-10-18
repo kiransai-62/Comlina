@@ -87,21 +87,23 @@ const INJECTION_PATTERNS = [
 ];
 
 // ============================================================================
-// 3. SECURITY HEADERS POLICY (OWASP Top 10 Recommended)
+// 3. SECURITY HEADERS POLICY (OWASP Top 10 Recommended with per-request Nonce)
 // ============================================================================
-const CSP_POLICY = [
-  "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.supabase.co https://*.facebook.com https://*.instagram.com https://accounts.google.com https://pagead2.googlesyndication.com https://*.googlesyndication.com https://adservice.google.com",
-  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' data: blob: https://images.unsplash.com https://*.facebook.com https://*.instagram.com https://*.cdninstagram.com https://*.fbcdn.net https://api.dicebear.com https://*.googleusercontent.com https://pagead2.googlesyndication.com",
-  "font-src 'self' https://fonts.gstatic.com data:",
-  "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai https://*.onrender.com wss://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com https://pagead2.googlesyndication.com https://*.googlesyndication.com",
-  "frame-src 'self' https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com",
-  "frame-ancestors 'none'",
-  "object-src 'none'",
-  "base-uri 'self'",
-  "form-action 'self' https://accounts.google.com https://*.facebook.com https://*.instagram.com https://api.instagram.com",
-].join('; ');
+function buildCspHeader(nonce: string, isDev: boolean): string {
+  return [
+    "default-src 'self'",
+    `script-src 'self' 'nonce-${nonce}' 'strict-dynamic' 'unsafe-inline' ${isDev ? "'unsafe-eval'" : ""} https://*.supabase.co https://*.facebook.com https://*.instagram.com https://accounts.google.com https://pagead2.googlesyndication.com https://*.googlesyndication.com https://adservice.google.com`,
+    "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
+    "img-src 'self' data: blob: https://images.unsplash.com https://*.facebook.com https://*.instagram.com https://*.cdninstagram.com https://*.fbcdn.net https://api.dicebear.com https://*.googleusercontent.com https://pagead2.googlesyndication.com",
+    "font-src 'self' https://fonts.gstatic.com data:",
+    "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai https://*.onrender.com wss://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com https://pagead2.googlesyndication.com https://*.googlesyndication.com",
+    "frame-src 'self' https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com",
+    "frame-ancestors 'none'",
+    "object-src 'none'",
+    "base-uri 'self'",
+    "form-action 'self' https://accounts.google.com https://*.facebook.com https://*.instagram.com https://api.instagram.com",
+  ].join('; ');
+}
 
 export function middleware(request: NextRequest) {
   const { pathname, search } = request.nextUrl;
@@ -240,8 +242,14 @@ export function middleware(request: NextRequest) {
   // --------------------------------------------------------------------------
   // CHECK 5: Forward Request with Injected Security Headers & Request Correlation
   // --------------------------------------------------------------------------
+  // Generate cryptographically random per-request nonce (base64)
+  const nonce = Buffer.from(crypto.randomUUID()).toString('base64');
+  const cspHeader = buildCspHeader(nonce, isDev);
+
   const requestHeaders = new Headers(request.headers);
   requestHeaders.set('x-request-id', requestId);
+  requestHeaders.set('x-nonce', nonce);
+  requestHeaders.set('Content-Security-Policy', cspHeader);
 
   const response = NextResponse.next({
     request: {
@@ -251,7 +259,8 @@ export function middleware(request: NextRequest) {
 
   // Apply OWASP Security Headers to the response
   response.headers.set('x-request-id', requestId);
-  response.headers.set('Content-Security-Policy', CSP_POLICY);
+  response.headers.set('x-nonce', nonce);
+  response.headers.set('Content-Security-Policy', cspHeader);
   response.headers.set('X-Frame-Options', 'DENY');
   response.headers.set('X-Content-Type-Options', 'nosniff');
   response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
