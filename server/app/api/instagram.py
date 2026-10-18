@@ -180,8 +180,6 @@ async def get_instagram_connection_status(
         )
 
 def _get_owner_filter(workspace: Workspace, user: Any):
-    if hasattr(user, "id") and user.id is not None:
-        return (InstagramAccount.workspace_id == workspace.id) | (InstagramAccount.user_id == user.id)
     return (InstagramAccount.workspace_id == workspace.id)
 
 @router.get("/accounts", response_model=List[InstagramAccountOut])
@@ -760,6 +758,7 @@ async def refresh_account_token(
     return account
 
 @router.post("/accounts/{account_id}/sync", response_model=InstagramAccountOut)
+@router.post("/accounts/{account_id}/sync-profile", response_model=InstagramAccountOut)
 async def sync_instagram_account_profile(
     account_id: uuid.UUID,
     user: User = Depends(get_current_user),
