@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabase';
 import { BrandLogo } from '@/components/BrandLogo';
+import { ComlinaLoadingOverlay } from '@/components/ComlinaLoadingOverlay';
 
 export default function AuthCallbackPage() {
   const [statusMessage, setStatusMessage] = useState('Completing secure sign-in...');
@@ -97,17 +98,8 @@ export default function AuthCallbackPage() {
   }, []);
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center bg-[#FAFAF8] px-4">
-      <div className="flex flex-col items-center space-y-4 max-w-sm text-center">
-        <BrandLogo variant="mark" height={48} className="animate-pulse" />
-        <div className="flex items-center space-x-2 text-sm text-[#70706B] font-medium">
-          <div className="w-2.5 h-2.5 rounded-full bg-[#004020] animate-ping" />
-          <span>{statusMessage}</span>
-        </div>
-        <p className="text-xs text-neutral-400">
-          Redirecting to your dashboard in just a moment...
-        </p>
-      </div>
+    <div className="min-h-screen bg-[#FAFAF8]">
+      <ComlinaLoadingOverlay isLoading={true} />
     </div>
   );
 }

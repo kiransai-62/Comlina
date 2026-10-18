@@ -32,6 +32,7 @@ import { automationsApi } from '@/features/automations/api';
 import { conversationsApi } from '@/features/conversations/api';
 import { authService } from '@/lib/auth';
 import { BrandLogo } from '@/components/BrandLogo';
+import { ComlinaLoadingOverlay } from '@/components/ComlinaLoadingOverlay';
 import { MovingArrowConnector } from '@/components/MovingArrowConnector';
 import { LivePerformanceAndConversations } from '@/components/dashboard/LivePerformanceAndConversations';
 
@@ -266,13 +267,9 @@ export default function DashboardOverviewPage() {
         </div>
       )}
 
-      {loadingAccounts ? (
-        <div className="bg-white border border-[#ECECE8] rounded-2xl p-12 text-center shadow-xs space-y-3">
-          <div className="w-10 h-10 rounded-full border-3 border-[#EAF6EE] border-t-[#15803D] animate-spin mx-auto" />
-          <h3 className="text-sm font-bold text-[#111110]">Loading your workspace...</h3>
-          <p className="text-xs text-[#70706B]">Checking connected Instagram accounts and real-time metrics.</p>
-        </div>
-      ) : hasAccounts ? (
+      {loadingAccounts && <ComlinaLoadingOverlay isLoading={true} />}
+
+      {hasAccounts ? (
         <>
           {/* 2. Stats Overview Section Header */}
           <div className="flex items-start justify-between flex-wrap gap-3 mb-4">

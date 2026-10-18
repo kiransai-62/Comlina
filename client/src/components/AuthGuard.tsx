@@ -7,6 +7,7 @@ import { authService } from '@/lib/auth';
 import { api } from '@/lib/api';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { BrandLogo } from '@/components/BrandLogo';
+import { ComlinaLoadingOverlay } from '@/components/ComlinaLoadingOverlay';
 
 export const AUTH_ENABLED = true; // Authentication guard enabled
 
@@ -140,14 +141,8 @@ export function AuthGuard({ children }: { children: React.ReactNode }) {
 
   if (authState === 'initializing') {
     return (
-      <div className="min-h-screen flex flex-col items-center justify-center bg-[#FBFBFA]">
-        <div className="flex flex-col items-center space-y-4">
-          <BrandLogo variant="mark" height={48} className="animate-pulse" />
-          <div className="flex items-center space-x-2 text-xs text-[#70706B] font-medium">
-            <div className="w-2 h-2 rounded-full bg-[#15803D] animate-ping" />
-            <span>Verifying session...</span>
-          </div>
-        </div>
+      <div className="min-h-screen bg-[#FBFBFA]">
+        <ComlinaLoadingOverlay isLoading={true} />
       </div>
     );
   }

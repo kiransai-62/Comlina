@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { CheckCircle, AlertCircle, Loader2, ShieldCheck } from 'lucide-react';
 import { instagramApi } from '@/features/instagram/api';
+import { ComlinaLoadingOverlay } from '@/components/ComlinaLoadingOverlay';
 
 function CallbackContent() {
   const router = useRouter();
@@ -57,11 +58,7 @@ function CallbackContent() {
   return (
     <div className="bg-white border border-[#ECECE8] rounded-2xl p-8 max-w-md w-full text-center shadow-lg">
       {status === 'loading' && (
-        <div className="space-y-4">
-          <Loader2 className="w-10 h-10 text-[#15803D] animate-spin mx-auto" />
-          <h2 className="font-bold text-base text-[#111110]">Connecting Instagram Account...</h2>
-          <p className="text-xs text-[#70706B]">Exchanging authorization code via Meta Graph API</p>
-        </div>
+        <ComlinaLoadingOverlay isLoading={true} />
       )}
 
       {status === 'success' && (

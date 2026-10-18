@@ -19,6 +19,10 @@
   --text-muted: #9E9E96;
   --forest-green: #004020;
   --primary-green: #15803D;
+  --comlina-purple: #8B3DFF;
+  --comlina-pink: #F50087;
+  --comlina-orange: #FF8A00;
+  --comlina-background: #FAFAF8;
   --radius-sm: 8px;
   --radius-md: 12px;
   --radius-lg: 16px;
@@ -132,5 +136,117 @@ body {
 .animate-pulse-travel {
   animation: pulseTravel 1.6s cubic-bezier(0.4, 0, 0.2, 1) infinite;
   will-change: transform, opacity;
+}
+
+/* ==========================================================================
+   Comlina Minimal Loading Animation
+   Sequential 3-dot pulse overlay matching mobile canonical artwork
+   ========================================================================== */
+
+.comlina-loading-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(250, 250, 248, 0.45);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px);
+  user-select: none;
+  pointer-events: auto;
+}
+
+.comlina-loading-dots {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.comlina-loading-dot {
+  width: 8.5px;
+  height: 8.5px;
+  border-radius: 50%;
+  opacity: 0.22;
+  box-shadow: none;
+  will-change: opacity, box-shadow;
+}
+
+.comlina-loading-dot:nth-child(1) {
+  background-color: var(--comlina-purple, #8B3DFF);
+  animation: comlina-dot-pulse-purple 1000ms infinite ease-in-out;
+}
+
+.comlina-loading-dot:nth-child(2) {
+  background-color: var(--comlina-pink, #F50087);
+  animation: comlina-dot-pulse-pink 1000ms infinite ease-in-out;
+}
+
+.comlina-loading-dot:nth-child(3) {
+  background-color: var(--comlina-orange, #FF8A00);
+  animation: comlina-dot-pulse-orange 1000ms infinite ease-in-out;
+}
+
+/* Sequential blinking keyframes:
+   Phase 1 (0% - 25%): Purple illuminates with purple glow
+   Phase 2 (25% - 50%): Pink illuminates with pink glow
+   Phase 3 (50% - 75%): Orange illuminates with orange glow
+   Phase 4 (75% - 100%): All dots rest at dim state (0.22 opacity)
+*/
+@keyframes comlina-dot-pulse-purple {
+  0% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+  6%, 19% {
+    opacity: 1;
+    box-shadow: 0 0 10px 2px rgba(139, 61, 255, 0.7);
+  }
+  25%, 100% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+}
+
+@keyframes comlina-dot-pulse-pink {
+  0%, 25% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+  31%, 44% {
+    opacity: 1;
+    box-shadow: 0 0 10px 2px rgba(245, 0, 135, 0.7);
+  }
+  50%, 100% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+}
+
+@keyframes comlina-dot-pulse-orange {
+  0%, 50% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+  56%, 69% {
+    opacity: 1;
+    box-shadow: 0 0 10px 2px rgba(255, 138, 0, 0.7);
+  }
+  75%, 100% {
+    opacity: 0.22;
+    box-shadow: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .comlina-loading-dot {
+    animation: none !important;
+    opacity: 0.65 !important;
+    box-shadow: none !important;
+  }
 }
 
