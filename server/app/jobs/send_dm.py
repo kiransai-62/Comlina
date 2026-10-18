@@ -79,7 +79,7 @@ async def send_dm_job(
 
     async with get_db_session() as session:
         try:
-            sender_id = event_data.get("sender_id")
+            sender_id: Optional[str] = str(event_data["sender_id"]) if event_data.get("sender_id") is not None else None
             recipient_id = event_data.get("recipient_id") or event_data.get("business_ig_id")
             incoming_text = event_data.get("text", "")
             sender_username = event_data.get("sender_username", "unknown")
@@ -131,7 +131,7 @@ async def send_dm_job(
                 stmt_contact = select(Contact).where(
                     Contact.workspace_id == account.workspace_id,
                     Contact.instagram_account_id == account.id,
-                    Contact.ig_user_id == str(sender_id)
+                    Contact.ig_user_id == sender_id
                 )
                 res_contact = await session.execute(stmt_contact)
                 contact = res_contact.scalar_one_or_none()
@@ -140,7 +140,7 @@ async def send_dm_job(
                     contact = Contact(
                         workspace_id=account.workspace_id,
                         instagram_account_id=account.id,
-                        ig_user_id=str(sender_id),
+                        ig_user_id=sender_id,
                         username=sender_username,
                         is_converted=True,
                         interaction_count=1,
@@ -202,6 +202,127 @@ async def send_dm_job(
                 )
                 session.add(contact_msg)
                 await session.flush()
+
+                # 4.5 Follow-to-Unlock Recheck Pipeline
+                custom_fields = dict(contact.custom_fields) if isinstance(contact.custom_fields, dict) else {}
+                pending_follow = custom_fields.get("follow_gate_pending")
+
+                if pending_follow and meta_client:
+                    sender_ig_id: str = sender_id or contact.ig_user_id
+                    logger.info(f"Rechecking follow status for contact {contact.id} (sender_id={sender_ig_id})...")
+                    from app.integrations.instagram.follower_status import InstagramFollowerService, FollowerStatus
+                    follower_service = InstagramFollowerService(meta_client)
+                    status_enum, reason = await follower_service.check_follower_status(account.ig_user_id, sender_ig_id)
+                    logger.info(f"Follow recheck result for {sender_ig_id}: {status_enum.value} ({reason})")
+
+                    if status_enum == FollowerStatus.FOLLOWING:
+                        # Confirmed! Advance states: follow_verified -> eligible_for_delivery -> resource_sent
+                        contact.follower_status = "FOLLOWING"
+                        contact.automation_state = "eligible_for_delivery"
+
+                        resource_text = pending_follow.get("resource_message") or ""
+                        buttons = pending_follow.get("buttons") or []
+                        auto_id_val = None
+                        if pending_follow.get("automation_id"):
+                            try:
+                                auto_id_val = uuid.UUID(str(pending_follow.get("automation_id")))
+                            except (ValueError, TypeError):
+                                pass
+
+                        messaging_client = InstagramMessaging(meta_client)
+                        delivery_res = await messaging_client.send_direct_message(
+                            ig_recipient_id=sender_ig_id,
+                            message_text=resource_text,
+                            buttons=buttons
+                        )
+
+                        contact.automation_state = "resource_sent"
+                        del custom_fields["follow_gate_pending"]
+                        contact.custom_fields = custom_fields
+
+                        tags = list(contact.tags) if isinstance(contact.tags, list) else []
+                        if "follow_verified" not in tags:
+                            tags.append("follow_verified")
+                        contact.tags = tags
+
+                        meta_msg_id = delivery_res.get("message_id") if isinstance(delivery_res, dict) else None
+                        bot_msg = Message(
+                            workspace_id=account.workspace_id,
+                            conversation_id=conversation.id,
+                            sender_type="BOT",
+                            text=resource_text,
+                            meta_message_id=meta_msg_id,
+                            automation_id=auto_id_val,
+                            created_at=datetime.now(timezone.utc)
+                        )
+                        session.add(bot_msg)
+
+                        recheck_analytics = AnalyticsEvent(
+                            workspace_id=account.workspace_id,
+                            instagram_account_id=account.id,
+                            contact_id=contact.id,
+                            automation_id=auto_id_val,
+                            event_type="FOLLOW_VERIFIED_RESOURCE_SENT",
+                            metadata_={
+                                "processing_state": "resource_sent",
+                                "verified": True,
+                                "sender_id": sender_ig_id,
+                                "reason": reason
+                            },
+                            created_at=datetime.now(timezone.utc)
+                        )
+                        session.add(recheck_analytics)
+                        execution_summary["actions_executed"] += 1
+                        execution_summary["processing_state"] = "resource_sent"
+                        execution_summary["follower_verified"] = True
+
+                        await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+                        await session.commit()
+                        return execution_summary
+
+                    elif status_enum == FollowerStatus.NOT_FOLLOWING:
+                        # User still does NOT follow! Send reminder, do not release resource
+                        contact.follower_status = "NOT_FOLLOWING"
+                        contact.automation_state = "verification_pending"
+
+                        account_username = pending_follow.get("account_username") or account.username
+                        retry_text = (
+                            pending_follow.get("retry_message")
+                            or f"We couldn't confirm your follow yet! Please make sure to follow @{account_username} and tap below 🚀"
+                        )
+                        retry_buttons = [
+                            {"label": f"Follow @{account_username}"[:20], "url": f"https://instagram.com/{account_username}"},
+                            {"label": "I followed! 🚀"[:20], "payload": "VERIFY_FOLLOW"}
+                        ]
+                        messaging_client = InstagramMessaging(meta_client)
+                        await messaging_client.send_direct_message(
+                            ig_recipient_id=sender_ig_id,
+                            message_text=retry_text,
+                            buttons=retry_buttons
+                        )
+                        execution_summary["processing_state"] = "verification_pending"
+                        execution_summary["follower_verified"] = False
+                        execution_summary["actions_executed"] += 1
+
+                        await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+                        await session.commit()
+                        return execution_summary
+
+                    else:  # CHECK_UNAVAILABLE
+                        contact.automation_state = "verification_unavailable"
+                        unavail_text = "Instagram follow verification is temporarily unavailable. Please tap 'I followed! 🚀' again in a moment."
+                        messaging_client = InstagramMessaging(meta_client)
+                        await messaging_client.send_direct_message(
+                            ig_recipient_id=sender_ig_id,
+                            message_text=unavail_text,
+                            buttons=[{"label": "I followed! 🚀"[:20], "payload": "VERIFY_FOLLOW"}]
+                        )
+                        execution_summary["processing_state"] = "verification_unavailable"
+                        execution_summary["follower_verified"] = False
+
+                        await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+                        await session.commit()
+                        return execution_summary
 
             # 5. Run active DM Automations
             stmt_auto = select(Automation).where(

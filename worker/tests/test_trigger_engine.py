@@ -67,3 +67,115 @@ def test_v2_playbook_event_type_mismatch():
     trigger = {"type": "COMMENT_TO_DM", "replyToAll": True}
     # Messaging event against comment trigger
     assert TriggerEngine.evaluate_trigger(trigger, {"event_type": "MESSAGING", "text": "hi"}) is False
+
+# ══════════════════════════════════════════════════════════════════════════
+# NEW TRIGGER MODE SPECIFICATION TESTS: "specific_keywords" & "any_keyword"
+# ══════════════════════════════════════════════════════════════════════════
+
+def test_trigger_mode_specific_keywords_with_single_keyword():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "specific_keywords",
+            "keywords": ["PRICE"],
+            "matchWholeWords": True,
+        }
+    }
+    # Matches keyword exactly / whole word
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "what is the price?"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "PRICE"}) is True
+    # Does not match non-keyword
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "great video!"}) is False
+    # Does not match partial word (e.g. priceless)
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "this is priceless"}) is False
+
+def test_trigger_mode_specific_keywords_with_multiple_keywords():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "specific_keywords",
+            "keywords": ["PRICE", "LINK", "INFO"],
+            "matchWholeWords": True,
+        }
+    }
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "send me the link"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "more info please"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "I love your content!"}) is False
+
+def test_trigger_mode_specific_keywords_empty_keywords_does_not_trigger():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "specific_keywords",
+            "keywords": [],
+        }
+    }
+    # In specific_keywords mode, an empty keyword list must NOT trigger as any keyword
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "hello"}) is False
+
+def test_trigger_mode_any_keyword_triggers_on_any_comment():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "any_keyword",
+            # Even if keywords are preserved in state, any comment triggers!
+            "keywords": ["PRICE", "LINK"],
+        }
+    }
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "Just saying hello! 👋"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "Awesome reel 🔥"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": "PRICE"}) is True
+    assert TriggerEngine.evaluate_trigger(flow, {"event_type": "COMMENT", "text": ""}) is True
+
+def test_trigger_mode_any_keyword_respects_post_scope():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "any_keyword",
+            "selectedPostId": "media_post_100",
+        }
+    }
+    # Matching post triggers for any comment
+    assert TriggerEngine.evaluate_trigger(flow, {
+        "event_type": "COMMENT",
+        "post_id": "media_post_100",
+        "text": "Any comment on targeted post"
+    }) is True
+
+    # Non-matching post does not trigger even in any_keyword mode
+    assert TriggerEngine.evaluate_trigger(flow, {
+        "event_type": "COMMENT",
+        "post_id": "media_post_999",
+        "text": "Comment on different post"
+    }) is False
+
+def test_trigger_mode_any_keyword_ineligible_event_type():
+    flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "triggerMode": "any_keyword",
+        }
+    }
+    # Event type mismatch: DM event against comment flow
+    assert TriggerEngine.evaluate_trigger(flow, {
+        "event_type": "MESSAGING",
+        "text": "Direct message"
+    }) is False
+
+def test_legacy_automations_without_trigger_mode():
+    # Legacy flow with keywords
+    legacy_flow = {
+        "type": "COMMENT_TO_DM",
+        "trigger": {
+            "type": "COMMENT",
+            "keywords": ["VIP"],
+        }
+    }
+    assert TriggerEngine.evaluate_trigger(legacy_flow, {"event_type": "COMMENT", "text": "I am VIP"}) is True
+    assert TriggerEngine.evaluate_trigger(legacy_flow, {"event_type": "COMMENT", "text": "hello"}) is False

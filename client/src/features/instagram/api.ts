@@ -23,10 +23,12 @@ export interface NormalizedInstagramMedia {
   type: 'POST' | 'REEL';
   caption: string;
   imageUrl: string;
-  commentsCount: number;
-  likesCount: number;
+  commentsCount?: number | null;
+  likesCount?: number | null;
   publishedDate: string;
   permalink?: string;
+  rawMediaType?: string;
+  mediaProductType?: string;
 }
 
 export const instagramApi = {
@@ -37,19 +39,24 @@ export const instagramApi = {
     if (Array.isArray(res?.data)) return res.data;
     return [];
   },
-  listMedia: async (accountId?: string, limit = 24, after?: string) => {
+  listMedia: async (
+    accountId?: string,
+    limit = 24,
+    after?: string
+  ): Promise<{ data: NormalizedInstagramMedia[]; next_cursor: string | null; paging?: any }> => {
     const q = new URLSearchParams({ limit: String(limit) });
     if (accountId) q.set('account_id', accountId);
     if (after) q.set('after', after);
-    try {
-      const res = await api.get<any>(`/instagram/media?${q.toString()}`, { timeout: 45000 });
-      if (Array.isArray(res)) {
-        return { data: res, next_cursor: null };
-      }
-      return res;
-    } catch {
-      return { data: [], next_cursor: null };
+    const endpoint = accountId ? `/instagram/accounts/${accountId}/media?${q.toString()}` : `/instagram/media?${q.toString()}`;
+    const res = await api.get<any>(endpoint, { timeout: 45000 });
+    if (Array.isArray(res)) {
+      return { data: res, next_cursor: null };
     }
+    return {
+      data: Array.isArray(res?.data) ? res.data : [],
+      next_cursor: res?.next_cursor || null,
+      paging: res?.paging || null
+    };
   },
   listAccounts: () => api.get<ConnectedInstagramAccount[]>('/instagram/accounts', { timeout: 30000 }),
   getConnectionStatus: () => api.get<InstagramConnectionStatusResponse>('/instagram/connection-status', { timeout: 30000 }),

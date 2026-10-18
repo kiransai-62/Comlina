@@ -223,33 +223,49 @@ async def list_instagram_accounts(
     return out
 
 def _normalize_media_item(item: Dict[str, Any]) -> Dict[str, Any]:
-    m_type = "REEL" if item.get("media_type") == "VIDEO" or item.get("media_product_type") == "REELS" else "POST"
+    raw_media_type = item.get("media_type") or "IMAGE"
+    media_product_type = item.get("media_product_type") or ""
+    if raw_media_type == "VIDEO" or (media_product_type and media_product_type.upper() == "REELS"):
+        m_type = "REEL"
+    else:
+        m_type = "POST"
     image_url = item.get("thumbnail_url") or item.get("media_url") or ""
+
+    # Real engagement metrics: None if missing, int if present (never fake)
+    likes = int(item["like_count"]) if item.get("like_count") is not None else None
+    comments = int(item["comments_count"]) if item.get("comments_count") is not None else None
+
     return {
         "id": str(item.get("id", "")),
         "type": m_type,
-        "caption": item.get("caption") or "",
+        "rawMediaType": raw_media_type,
+        "mediaProductType": media_product_type,
+        "caption": item.get("caption") if item.get("caption") is not None else "",
         "imageUrl": image_url,
-        "commentsCount": int(item.get("comments_count") or 0),
-        "likesCount": int(item.get("like_count") or 0),
+        "commentsCount": comments,
+        "likesCount": likes,
         "publishedDate": str(item.get("timestamp") or ""),
         "permalink": item.get("permalink") or ""
     }
 
-@router.get("/media", response_model=List[Dict[str, Any]])
-@router.get("/accounts/{account_id}/media", response_model=List[Dict[str, Any]])
+@router.get("/media")
+@router.get("/accounts/{account_id}/media")
 async def list_instagram_media(
     account_id: Optional[uuid.UUID] = None,
     limit: int = Query(24, ge=1, le=50),
+    after: Optional[str] = Query(None),
+    format: Optional[str] = Query(None),
+    user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db)
 ):
     stmt = select(InstagramAccount).where(
-        InstagramAccount.workspace_id == workspace.id,
+        _get_owner_filter(workspace, user),
         InstagramAccount.is_active == True  # noqa: E712
     )
     if account_id:
         stmt = stmt.where(InstagramAccount.id == account_id)
+    stmt = stmt.order_by(InstagramAccount.updated_at.desc(), InstagramAccount.connected_at.desc())
     account = (await db.execute(stmt)).scalars().first()
     if not account:
         raise HTTPException(status_code=404, detail="No connected Instagram account found.")
@@ -259,24 +275,63 @@ async def list_instagram_media(
         raise HTTPException(status_code=409, detail="Stored token is unreadable. Reconnect your Instagram account.")
 
     if not token or token.startswith("mock_"):
-        return []
+        if format == "list":
+            return []
+        return {"data": [], "next_cursor": None, "paging": {}}
 
-    params = {
+    params: Dict[str, Any] = {
         "fields": "id,caption,media_type,media_product_type,media_url,thumbnail_url,permalink,timestamp,like_count,comments_count",
         "limit": limit
     }
+    if after:
+        params["after"] = after
+
+    # Official Meta Graph API endpoint:
+    # On graph.facebook.com for page-linked IG account, use {ig_user_id}/media.
+    # On graph.instagram.com, me/media or {ig_user_id}/media.
+    endpoint = f"{account.ig_user_id}/media" if (token.startswith("EAA") and account.ig_user_id) else "me/media"
+
     try:
-        raw = await MetaGraphClient(token).get("me/media", params=params)
+        raw = await MetaGraphClient(token).get(endpoint, params=params)
     except MetaTokenExpiredError:
-        raise HTTPException(status_code=409, detail="Instagram token expired. Reconnect the account.")
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_EXPIRED"
+        await db.commit()
+        raise HTTPException(status_code=409, detail="Instagram token expired or revoked. Please reconnect the account.")
     except MetaRateLimitError:
         raise HTTPException(status_code=429, detail="Instagram rate limit reached. Try again shortly.")
     except MetaGraphAPIError as e:
-        logger.warning(f"Failed to fetch media from Meta: {e}")
-        return []
+        logger.warning(f"Failed to fetch media from Meta endpoint {endpoint}: {e}")
+        if endpoint != "me/media":
+            try:
+                raw = await MetaGraphClient(token).get("me/media", params=params)
+            except Exception:
+                raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
+        else:
+            raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
 
     raw_items = raw.get("data", []) if isinstance(raw, dict) else []
-    return [_normalize_media_item(m) for m in raw_items]
+    paging = raw.get("paging", {}) if isinstance(raw, dict) else {}
+    cursors = paging.get("cursors", {}) if isinstance(paging, dict) else {}
+    next_cursor = cursors.get("after") if isinstance(cursors, dict) else None
+
+    # Deduplicate media by actual media ID
+    seen_ids = set()
+    normalized_items = []
+    for m in raw_items:
+        mid = str(m.get("id", ""))
+        if mid and mid not in seen_ids:
+            seen_ids.add(mid)
+            normalized_items.append(_normalize_media_item(m))
+
+    if format == "list":
+        return normalized_items
+
+    return {
+        "data": normalized_items,
+        "next_cursor": next_cursor,
+        "paging": paging
+    }
 
 def _is_allowed_redirect_uri(redirect_uri: Optional[str]) -> bool:
     if not redirect_uri:
@@ -728,9 +783,12 @@ async def sync_instagram_account_profile(
 
     now = datetime.now(timezone.utc)
     account.username = profile.get("username") or account.username
-    account.account_type = profile.get("account_type") or account.account_type
-    if profile.get("followers_count") is not None:
-        account.follower_count = int(profile.get("followers_count"))
+    followers = profile.get("followers_count")
+    if followers is not None:
+        try:
+            account.follower_count = int(followers)
+        except (ValueError, TypeError):
+            pass
     if profile.get("profile_picture_url"):
         account.profile_pic_url = profile.get("profile_picture_url")
     account.last_validated_at = now

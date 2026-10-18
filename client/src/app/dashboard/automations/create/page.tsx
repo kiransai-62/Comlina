@@ -1,11 +1,12 @@
 // client/src/app/dashboard/automations/create/page.tsx
 'use client';
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import React, { useState, useEffect, useMemo, Suspense } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useInfiniteQuery } from '@tanstack/react-query';
 import { useUIStore } from '@/stores/uiStore';
 import { useAutomations } from '@/features/automations/hooks';
+import { automationsApi } from '@/features/automations/api';
 import { instagramApi } from '@/features/instagram/api';
 import { ConnectedInstagramAccount } from '@/features/instagram/types';
 
@@ -39,6 +40,8 @@ import { usePlan } from '@/hooks/usePlan';
 
 export default function CreateAutomationPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
+  const editId = searchParams.get('edit');
   const showToast = useUIStore((s) => s.showToast);
   const { createAutomation, publishAutomation } = useAutomations();
   const { openUpgradeModal } = usePlan();
@@ -59,6 +62,7 @@ export default function CreateAutomationPage() {
   const [createdAutomationId, setCreatedAutomationId] = useState<string | undefined>();
   const [mobileStudioTab, setMobileStudioTab] = useState<'editor' | 'preview'>('editor');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  const [editingAutomation, setEditingAutomation] = useState<any>(null);
 
   // Dynamic live preview state synced from whichever automation flow is active
   const [livePreviewData, setLivePreviewData] = useState<any>({});
@@ -69,6 +73,23 @@ export default function CreateAutomationPage() {
       ...data,
     }));
   }, []);
+
+  // Restore automation if edit param is provided
+  useEffect(() => {
+    if (editId) {
+      automationsApi.get(editId).then((res: any) => {
+        if (res) {
+          setEditingAutomation(res);
+          const flow = res.flow_definition;
+          if (flow?.type === 'COMMENT_TO_DM' || flow?.trigger?.type === 'COMMENT') {
+            setActiveFlowView('comment_to_dm');
+          }
+        }
+      }).catch((e: any) => {
+        console.warn('Could not fetch automation for editing:', e);
+      });
+    }
+  }, [editId]);
 
   // Load connected Instagram accounts
   useEffect(() => {
@@ -553,6 +574,7 @@ export default function CreateAutomationPage() {
                   avatarUrl={activeAccount?.profile_pic_url || null}
                   selectedPost={livePreviewData.selectedPost || selectedPost}
                   keywords={livePreviewData.keywords || draft.conditions.keywords}
+                  triggerMode={livePreviewData.triggerMode}
                   publicReplyEnabled={livePreviewData.publicReplyEnabled ?? draft.publicReply.enabled}
                   publicReplyText={livePreviewData.publicReplyText ?? draft.publicReply.messages[0] ?? ''}
                   openingDmEnabled={livePreviewData.openingDmEnabled ?? draft.privateDm.enabled}
@@ -661,6 +683,8 @@ export default function CreateAutomationPage() {
             setDraft((prev) => ({ ...prev, instagramAccountId: acc.id }));
           }}
           isSaving={isPublishing}
+          onPreviewChange={handlePreviewChange}
+          initialData={editingAutomation?.flow_definition || editingAutomation}
         />
         <PublishModal
           isOpen={publishModalOpen}

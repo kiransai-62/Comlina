@@ -10,68 +10,23 @@ export interface InstagramMediaItem {
   type: 'POST' | 'REEL';
   caption: string;
   imageUrl: string;
-  commentsCount: number;
-  likesCount: number;
-  publishedDate: string;
+  commentsCount?: number | null;
+  likesCount?: number | null;
+  publishedDate?: string;
+  permalink?: string;
+  rawMediaType?: string;
+  mediaProductType?: string;
 }
-
-export const SAMPLE_INSTAGRAM_POSTS: InstagramMediaItem[] = [
-  {
-    id: 'media_summer',
-    type: 'POST',
-    caption: 'Summer Collection',
-    imageUrl: 'https://images.unsplash.com/photo-1572490122747-3968b75cc699?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 84,
-    likesCount: 1200,
-    publishedDate: 'Aug 12, 2024',
-  },
-  {
-    id: 'media_sneakers',
-    type: 'POST',
-    caption: 'Streetwear Footwear Drop',
-    imageUrl: 'https://images.unsplash.com/photo-1552346154-21d32810aba3?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 160,
-    likesCount: 2450,
-    publishedDate: 'Aug 10, 2024',
-  },
-  {
-    id: 'media_beach',
-    type: 'REEL',
-    caption: 'Sunset Beach Golden Hour',
-    imageUrl: 'https://images.unsplash.com/photo-1507525428034-b723cf961d3e?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 290,
-    likesCount: 3100,
-    publishedDate: 'Aug 08, 2024',
-  },
-  {
-    id: 'media_desk',
-    type: 'POST',
-    caption: 'Minimal Workspace Setup',
-    imageUrl: 'https://images.unsplash.com/photo-1518455027359-f3f8164ba6bd?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 52,
-    likesCount: 940,
-    publishedDate: 'Aug 05, 2024',
-  },
-  {
-    id: 'media_plant',
-    type: 'POST',
-    caption: 'Indoor Botanical Greenery',
-    imageUrl: 'https://images.unsplash.com/photo-1485955900006-10f4d324d411?w=500&auto=format&fit=crop&q=80',
-    commentsCount: 39,
-    likesCount: 820,
-    publishedDate: 'Aug 01, 2024',
-  },
-];
 
 export function mapApiMedia(m: InstagramMediaApiItem): InstagramMediaItem {
   const published = m.timestamp ? new Date(m.timestamp) : null;
   return {
     id: m.id,
     type: m.media_type === 'VIDEO' ? 'REEL' : 'POST',
-    caption: m.caption || '(no caption)',
+    caption: m.caption || '',
     imageUrl: m.thumbnail_url || m.media_url || '',
-    commentsCount: m.comments_count ?? 0,
-    likesCount: m.like_count ?? 0,
+    commentsCount: m.comments_count ?? null,
+    likesCount: m.like_count ?? null,
     publishedDate: published && !isNaN(published.getTime()) ? published.toLocaleDateString() : '',
   };
 }
@@ -222,17 +177,21 @@ export function PostSelector({
                   </div>
                 )}
 
-                {/* Gradient overlay for stats */}
-                <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex items-center justify-between text-xs text-white font-medium">
-                  <span>💬 {post.commentsCount}</span>
-                  <span>❤️ {post.likesCount > 999 ? `${(post.likesCount / 1000).toFixed(1)}k` : post.likesCount}</span>
-                </div>
+                {/* Gradient overlay for stats if genuinely available */}
+                {(post.commentsCount !== null && post.commentsCount !== undefined || post.likesCount !== null && post.likesCount !== undefined) && (
+                  <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 via-black/40 to-transparent flex items-center justify-between text-xs text-white font-medium">
+                    {post.commentsCount !== null && post.commentsCount !== undefined && <span>💬 {post.commentsCount}</span>}
+                    {post.likesCount !== null && post.likesCount !== undefined && (
+                      <span>❤️ {post.likesCount > 999 ? `${(post.likesCount / 1000).toFixed(1)}k` : post.likesCount}</span>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* Caption snippet */}
               <div className="p-2.5">
                 <p className="text-xs text-[#111110] font-medium line-clamp-2 leading-tight">
-                  {post.caption}
+                  {post.caption && post.caption.trim() ? post.caption : <span className="italic text-[#70706B] font-normal">(No caption)</span>}
                 </p>
                 <div className="text-xs text-[#70706B] mt-1.5 flex items-center justify-between">
                   <span>{post.publishedDate}</span>

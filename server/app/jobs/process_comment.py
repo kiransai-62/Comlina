@@ -55,7 +55,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
     6. Updates WebhookEvent status to PROCESSED.
     """
     logger.info(f"Processing comment job: event_id={event_id}")
-    execution_summary = {
+    execution_summary: Dict[str, Any] = {
         "event_id": event_id,
         "automations_matched": 0,
         "actions_executed": 0,
@@ -175,6 +175,28 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     )
                     return execution_summary
 
+            # 2.6 Resolve Contact & Pre-cache follower status if already verified
+            contact = None
+            commenter_id = event_data.get("sender_id")
+            commenter_username = event_data.get("sender_username", "unknown")
+
+            if account and commenter_id:
+                stmt_contact = (
+                    select(Contact)
+                    .where(
+                        Contact.workspace_id == account.workspace_id,
+                        Contact.instagram_account_id == account.id,
+                        Contact.ig_user_id == str(commenter_id)
+                    )
+                )
+                res_contact = await session.execute(stmt_contact)
+                contact = res_contact.scalar_one_or_none()
+                if contact and contact.follower_status == "FOLLOWING":
+                    event_data["follower_status"] = "FOLLOWING"
+
+            event_data["business_username"] = account.username
+            event_data["account_username"] = account.username
+
             for auto in automations:
                 res = await FlowEngine.run_flow(
                     auto.flow_definition,
@@ -186,6 +208,10 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 if is_matched:
                     execution_summary["automations_matched"] += 1
                 execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
+                if res.get("processing_state"):
+                    execution_summary["processing_state"] = res.get("processing_state")
+                if res.get("follower_verified") is not None:
+                    execution_summary["follower_verified"] = res.get("follower_verified")
 
                 if is_matched:
                     action_results = res.get("results", [])
@@ -212,32 +238,19 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                                         post_usage.dms_delivered_count = (post_usage.dms_delivered_count or 0) + 1
                                         post_usage.last_delivered_at = datetime.now(timezone.utc)
 
-            # 3. Contact Auto-Creation / Upsert
-            contact = None
-            commenter_id = event_data.get("sender_id")
-            commenter_username = event_data.get("sender_username", "unknown")
-
+            # 3. Contact Auto-Creation / Upsert with Follower & Automation States
             if account and commenter_id:
-                stmt_contact = (
-                    select(Contact)
-                    .where(
-                        Contact.workspace_id == account.workspace_id,
-                        Contact.instagram_account_id == account.id,
-                        Contact.ig_user_id == str(commenter_id)
-                    )
-                )
-                res_contact = await session.execute(stmt_contact)
-                contact = res_contact.scalar_one_or_none()
-
                 if not contact:
                     contact = Contact(
                         workspace_id=account.workspace_id,
                         instagram_account_id=account.id,
                         ig_user_id=str(commenter_id),
                         username=commenter_username,
-                        follower_status=event_data.get("follower_status", "UNKNOWN"),
+                        follower_status=str(event_data.get("follower_status") or "UNKNOWN"),
+                        automation_state=str(execution_summary.get("processing_state") or "received"),
                         interaction_count=1,
                         tags=["lead", "commenter"],
+                        custom_fields={},
                         last_interaction_at=datetime.now(timezone.utc)
                     )
                     session.add(contact)
@@ -248,8 +261,19 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     if commenter_username and commenter_username != "unknown":
                         contact.username = commenter_username
                     if event_data.get("follower_status"):
-                        contact.follower_status = event_data.get("follower_status")
-                    await session.flush()
+                        contact.follower_status = str(event_data.get("follower_status"))
+                    if execution_summary.get("processing_state"):
+                        contact.automation_state = str(execution_summary["processing_state"])
+
+                # Persist pending delivery for follow-to-unlock recheck if follow gate was sent
+                for auto_run in execution_summary["results"]:
+                    r_obj = auto_run.get("result", {})
+                    if r_obj.get("pending_delivery"):
+                        current_cf = dict(contact.custom_fields) if isinstance(contact.custom_fields, dict) else {}
+                        current_cf["follow_gate_pending"] = r_obj["pending_delivery"]
+                        contact.custom_fields = current_cf
+                        contact.automation_state = "verification_pending"
+                await session.flush()
 
             # 4. Conversation and Message Auto-Creation
             if account and contact:
@@ -325,7 +349,9 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     metadata_={
                         "comment_id": event_data.get("comment_id"),
                         "actions_count": execution_summary["actions_executed"],
-                        "sender_username": commenter_username
+                        "sender_username": commenter_username,
+                        "processing_state": execution_summary.get("processing_state", "completed"),
+                        "follower_status": contact.follower_status if contact else "UNKNOWN"
                     },
                     created_at=datetime.now(timezone.utc)
                 )

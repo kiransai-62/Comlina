@@ -62,9 +62,23 @@ class PlanService:
             return False, "Reply to All Comments requires a Premium (₹199/mo) or Pro plan. Please upgrade to unlock."
 
         # 6. Trigger Keywords (>3 keywords requires expanded_keywords)
-        keywords = flow_definition.get("keywords") or flow_definition.get("trigger_keywords") or []
-        if len(keywords) > 3 and not has_feature(tier, "expanded_keywords"):
-            return False, f"The Free plan supports up to 3 trigger keywords (you specified {len(keywords)}). Upgrade to Premium for unlimited keywords."
+        raw_trigger = flow_definition.get("trigger")
+        trigger_config: Dict[str, Any] = raw_trigger if isinstance(raw_trigger, dict) else {}
+        trigger_mode = str(
+            flow_definition.get("triggerMode")
+            or trigger_config.get("triggerMode")
+            or ""
+        ).strip().lower()
+
+        if trigger_mode != "any_keyword":
+            keywords = (
+                flow_definition.get("keywords")
+                or trigger_config.get("keywords")
+                or flow_definition.get("trigger_keywords")
+                or []
+            )
+            if len(keywords) > 3 and not has_feature(tier, "expanded_keywords"):
+                return False, f"The Free plan supports up to 3 trigger keywords (you specified {len(keywords)}). Upgrade to Premium for unlimited keywords."
 
         # 7. Live Comment -> PRO
         live_comment = flow_definition.get("liveCommentEnabled") or flow_definition.get("trigger_type") == "LIVE_COMMENT"

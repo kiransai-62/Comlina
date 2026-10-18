@@ -44,6 +44,7 @@ export interface InstagramPhonePreviewProps {
   showStepHeader?: boolean;
   isConnectedAccount?: boolean;
   accountStatus?: string;
+  triggerMode?: 'specific_keywords' | 'any_keyword';
 }
 
 export function InstagramPhonePreview({
@@ -73,6 +74,7 @@ export function InstagramPhonePreview({
   showStepHeader = true,
   isConnectedAccount = true,
   accountStatus = 'CONNECTED',
+  triggerMode = 'specific_keywords',
 }: InstagramPhonePreviewProps) {
   const [activeTab, setActiveTab] = useState<'post' | 'comments' | 'dm' | 'story'>(
     defaultTab || (isStoryFlow ? 'story' : 'dm')
@@ -296,7 +298,7 @@ export function InstagramPhonePreview({
                 {/* Caption */}
                 <div className="text-xs leading-relaxed">
                   <span className="font-bold mr-1.5">{displayAccountName}</span>
-                  <span>{selectedPost?.caption || `Comment ${displayKeyword} for direct access link!`}</span>
+                  <span>{selectedPost?.caption || (triggerMode === 'any_keyword' ? 'Leave any comment below for the link!' : `Comment ${displayKeyword} for direct access link!`)}</span>
                 </div>
 
                 <button
@@ -336,9 +338,20 @@ export function InstagramPhonePreview({
                   <div className="flex-1 min-w-0">
                     <div className="text-xs">
                       <span className="font-bold text-[#111110] mr-1.5">user.comment</span>
-                      <span className="font-semibold text-[#062E1A] bg-[#DCFCE7] px-1 py-0.5 rounded">
-                        {displayKeyword}
-                      </span>
+                      {triggerMode === 'any_keyword' ? (
+                        <>
+                          <span className="text-[#111110]">
+                            Can you please send me the link? 🔥
+                          </span>
+                          <span className="ml-1.5 text-[9px] font-semibold text-[#15803D] bg-[#DCFCE7] px-1 py-0.2 rounded inline-block">
+                            Any comment
+                          </span>
+                        </>
+                      ) : (
+                        <span className="font-semibold text-[#062E1A] bg-[#DCFCE7] px-1 py-0.5 rounded">
+                          {displayKeyword}
+                        </span>
+                      )}
                     </div>
                     <div className="flex items-center gap-3 text-[10px] text-[#70706B] mt-1">
                       <span>Just now</span>
@@ -433,7 +446,7 @@ export function InstagramPhonePreview({
                 </div>
 
                 {/* 3. Non-Follower Gate Message (If non_follower view is active and askFollow is enabled) */}
-                {askFollowEnabled && previewState === 'non_follower' && (
+                {askFollowEnabled && previewState === 'non_follower' ? (
                   <div className="flex items-start gap-2 max-w-[90%] animate-in fade-in duration-150">
                     {renderAvatar('w-6 h-6', 'text-[9px]')}
                     <div className="space-y-1.5 flex-1 min-w-0">
@@ -449,44 +462,44 @@ export function InstagramPhonePreview({
                       </button>
                     </div>
                   </div>
-                )}
+                ) : (
+                  /* 4. Automated DM Message (Left-aligned from Connected Account, unlocked for followers) */
+                  <div className="flex items-start gap-2 max-w-[90%] animate-in fade-in duration-150">
+                    {renderAvatar('w-6 h-6', 'text-[9px]')}
+                    <div className="space-y-1.5 flex-1 min-w-0">
+                      {/* DM Text Bubble */}
+                      <div className="bg-[#EFEFEF] text-[#111110] px-3.5 py-2.5 rounded-2xl rounded-tl-sm text-xs leading-relaxed whitespace-pre-wrap shadow-2xs">
+                        {deliveryText || `Hey! 👋 Here's the resource you requested:`}
+                      </div>
 
-                {/* 4. Automated DM Message (Left-aligned from Connected Account) */}
-                <div className="flex items-start gap-2 max-w-[90%] animate-in fade-in duration-150">
-                  {renderAvatar('w-6 h-6', 'text-[9px]')}
-                  <div className="space-y-1.5 flex-1 min-w-0">
-                    {/* DM Text Bubble */}
-                    <div className="bg-[#EFEFEF] text-[#111110] px-3.5 py-2.5 rounded-2xl rounded-tl-sm text-xs leading-relaxed whitespace-pre-wrap shadow-2xs">
-                      {deliveryText || `Hey! 👋 Here's the resource you requested:`}
-                    </div>
-
-                    {/* Rich Link Card inside DM */}
-                    {deliveryLinkButtonText && (
-                      <div className="w-full bg-white border border-[#ECECE8] rounded-xl overflow-hidden shadow-2xs">
-                        <div className="p-2.5 flex items-center gap-2.5 bg-[#FAFAFA] border-b border-[#F4F4F0]">
-                          {renderAvatar('w-9 h-9', 'text-sm')}
-                          <div className="min-w-0 flex-1">
-                            <div className="text-xs font-bold text-[#111110] truncate">
-                              {deliveryLinkButtonText}
-                            </div>
-                            <div className="text-[10px] text-[#70706B] truncate font-mono">
-                              {domain}
-                            </div>
-                            <div className="text-[10.5px] text-[#70706B] truncate">
-                              Destination Resource Link
+                      {/* Rich Link Card inside DM */}
+                      {deliveryLinkButtonText && (
+                        <div className="w-full bg-white border border-[#ECECE8] rounded-xl overflow-hidden shadow-2xs">
+                          <div className="p-2.5 flex items-center gap-2.5 bg-[#FAFAFA] border-b border-[#F4F4F0]">
+                            {renderAvatar('w-9 h-9', 'text-sm')}
+                            <div className="min-w-0 flex-1">
+                              <div className="text-xs font-bold text-[#111110] truncate">
+                                {deliveryLinkButtonText}
+                              </div>
+                              <div className="text-[10px] text-[#70706B] truncate font-mono">
+                                {domain}
+                              </div>
+                              <div className="text-[10.5px] text-[#70706B] truncate">
+                                Destination Resource Link
+                              </div>
                             </div>
                           </div>
+                          <button
+                            type="button"
+                            className="w-full py-2 px-3 text-center text-xs font-semibold text-[#0084FF] hover:bg-[#F4F8FF] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
+                          >
+                            <span>{deliveryLinkButtonText}</span>
+                          </button>
                         </div>
-                        <button
-                          type="button"
-                          className="w-full py-2 px-3 text-center text-xs font-semibold text-[#0084FF] hover:bg-[#F4F8FF] transition-colors flex items-center justify-center gap-1.5 cursor-pointer"
-                        >
-                          <span>{deliveryLinkButtonText}</span>
-                        </button>
-                      </div>
-                    )}
+                      )}
+                    </div>
                   </div>
-                </div>
+                )}
 
                 {/* 5. Follow-up DM (if enabled) */}
                 {followupEnabled && (

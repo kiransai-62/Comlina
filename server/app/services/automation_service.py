@@ -70,6 +70,16 @@ class AutomationService:
 
         # 3. Plan-Based Feature Validation:
         flow_dict = data.flow_definition.model_dump()
+        trigger = flow_dict.get("trigger", {}) if isinstance(flow_dict.get("trigger"), dict) else {}
+        trigger_mode = flow_dict.get("triggerMode") or trigger.get("triggerMode")
+        if trigger_mode is not None:
+            trigger_mode_str = str(trigger_mode).strip().lower()
+            if trigger_mode_str not in ("specific_keywords", "any_keyword"):
+                raise HTTPException(
+                    status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                    detail="Invalid triggerMode. Must be 'specific_keywords' or 'any_keyword'."
+                )
+
         stmt_ws = select(Workspace).where(Workspace.id == workspace_id)
         res_ws = await db.execute(stmt_ws)
         workspace = res_ws.scalar_one_or_none()
@@ -130,6 +140,16 @@ class AutomationService:
 
         if data.flow_definition is not None and workspace:
             flow_dict = data.flow_definition.model_dump()
+            trigger = flow_dict.get("trigger", {}) if isinstance(flow_dict.get("trigger"), dict) else {}
+            trigger_mode = flow_dict.get("triggerMode") or trigger.get("triggerMode")
+            if trigger_mode is not None:
+                trigger_mode_str = str(trigger_mode).strip().lower()
+                if trigger_mode_str not in ("specific_keywords", "any_keyword"):
+                    raise HTTPException(
+                        status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+                        detail="Invalid triggerMode. Must be 'specific_keywords' or 'any_keyword'."
+                    )
+
             is_valid, error_msg = PlanService.validate_automation_features(workspace, flow_dict)
             if not is_valid:
                 raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=error_msg)

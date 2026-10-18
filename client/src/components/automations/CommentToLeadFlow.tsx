@@ -1,7 +1,7 @@
 // client/src/components/automations/CommentToLeadFlow.tsx
 'use client';
 
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   ArrowLeft, 
   Sparkles, 
@@ -18,6 +18,7 @@ import {
   ChevronDown
 } from 'lucide-react';
 import { FlowActionButtons } from './FlowActionButtons';
+import { instagramApi, type NormalizedInstagramMedia } from '@/features/instagram/api';
 
 interface ReminderItem {
   id: string;
@@ -34,58 +35,6 @@ interface CommentToLeadFlowProps {
   onPreviewChange?: (previewData: any) => void;
 }
 
-// Sample posts styled like the user screenshot
-const LEAD_FLOW_SAMPLE_POSTS = [
-  {
-    id: 'lead_post_1',
-    title: 'Without the right system, leads slip away...',
-    imageUrl: 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=400&auto=format&fit=crop&q=80',
-    color: 'from-blue-600 to-indigo-900',
-  },
-  {
-    id: 'lead_post_2',
-    title: 'If AI writes the code, what does the developer do?',
-    imageUrl: 'https://images.unsplash.com/photo-1555066931-4365d14bab8c?w=400&auto=format&fit=crop&q=80',
-    color: 'from-cyan-600 to-blue-800',
-  },
-  {
-    id: 'lead_post_3',
-    title: 'How we 10x\'d qualified inbound calls in 30 days',
-    imageUrl: 'https://images.unsplash.com/photo-1551836022-d5d88e9218df?w=400&auto=format&fit=crop&q=80',
-    color: 'from-emerald-600 to-teal-900',
-  },
-  {
-    id: 'lead_post_4',
-    title: 'AI READS THE EMAIL BEFORE YOU DO.',
-    imageUrl: 'https://images.unsplash.com/photo-1579389083078-4e7018379f7e?w=400&auto=format&fit=crop&q=80',
-    color: 'from-orange-500 to-amber-700',
-  },
-  {
-    id: 'lead_post_5',
-    title: 'Stop losing high-intent prospects in comments',
-    imageUrl: 'https://images.unsplash.com/photo-1542744094-3a31f272c490?w=400&auto=format&fit=crop&q=80',
-    color: 'from-violet-600 to-purple-900',
-  },
-  {
-    id: 'lead_post_6',
-    title: '3 AI MODELS, 1 REAL TASK: Automating DMs',
-    imageUrl: 'https://images.unsplash.com/photo-1460925895917-afdab827c52f?w=400&auto=format&fit=crop&q=80',
-    color: 'from-sky-600 to-indigo-800',
-  },
-  {
-    id: 'lead_post_7',
-    title: 'Behind our real-time webhook infrastructure',
-    imageUrl: 'https://images.unsplash.com/photo-1557804506-669a67965ba0?w=400&auto=format&fit=crop&q=80',
-    color: 'from-slate-800 to-neutral-900',
-  },
-  {
-    id: 'lead_post_8',
-    title: 'THE ONLY 3 THINGS YOU NEED TO SCALE REVENUE',
-    imageUrl: 'https://images.unsplash.com/photo-1522071820081-009f0129c71c?w=400&auto=format&fit=crop&q=80',
-    color: 'from-rose-600 to-pink-900',
-  },
-];
-
 export function CommentToLeadFlow({
   onBack,
   onSave,
@@ -98,7 +47,25 @@ export function CommentToLeadFlow({
 
   // 2. Post Selection State
   const [selectedPostId, setSelectedPostId] = useState<string>('all');
+  const [posts, setPosts] = useState<NormalizedInstagramMedia[]>([]);
+  const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const postScrollRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setIsLoadingPosts(true);
+    instagramApi.getMedia()
+      .then((data) => {
+        if (mounted && data) {
+          setPosts(data);
+        }
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (mounted) setIsLoadingPosts(false);
+      });
+    return () => { mounted = false; };
+  }, []);
 
   // 3. Trigger State
   const [replyToAll, setReplyToAll] = useState(false);
@@ -326,8 +293,12 @@ export function CommentToLeadFlow({
                 )}
               </div>
 
-              {/* Sample Post Cards */}
-              {LEAD_FLOW_SAMPLE_POSTS.map((post) => {
+              {/* Real Post Cards */}
+              {isLoadingPosts ? (
+                Array.from({ length: 3 }).map((_, i) => (
+                  <div key={i} className="h-20 rounded-xl border border-[#ECECE8] bg-gray-100 animate-pulse" />
+                ))
+              ) : posts.map((post) => {
                 const isSelected = selectedPostId === post.id;
                 return (
                   <div
@@ -339,14 +310,23 @@ export function CommentToLeadFlow({
                         : 'border-[#ECECE8] hover:border-gray-400'
                     }`}
                   >
-                    <img
-                      src={post.imageUrl}
-                      alt={post.title}
-                      className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                    />
+                    {post.imageUrl ? (
+                      <img
+                        src={post.imageUrl}
+                        alt={post.caption || 'Instagram Post'}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                        onError={(e) => {
+                          (e.target as HTMLElement).style.display = 'none';
+                        }}
+                      />
+                    ) : (
+                      <div className="w-full h-full flex items-center justify-center bg-gray-100 text-gray-400">
+                        <ImageIcon size={16} />
+                      </div>
+                    )}
                     <div className="absolute inset-0 bg-gradient-to-t from-black/85 via-black/40 to-transparent p-1.5 flex flex-col justify-end text-white">
                       <span className="text-[9px] font-medium line-clamp-2 leading-tight">
-                        {post.title}
+                        {post.caption || '(No caption)'}
                       </span>
                     </div>
                     {isSelected && (

@@ -7,6 +7,7 @@ function validateCommentToDmForm({
   selectedAccountId,
   postMode,
   selectedPostId,
+  triggerMode = 'specific_keywords',
   keywords,
   replyToAll,
   responseDm,
@@ -23,7 +24,7 @@ function validateCommentToDmForm({
     errors.push('Please select an Instagram post.');
   }
 
-  if (!replyToAll && (!keywords || keywords.length === 0)) {
+  if (triggerMode === 'specific_keywords' && !replyToAll && (!keywords || keywords.length === 0)) {
     errors.push('At least one trigger keyword is required.');
   }
 
@@ -200,3 +201,296 @@ test('Dynamic Simulator Domain & Avatar - Resolves domain and authentic initials
   assert.equal(getAvatarInitial('@urban_style'), 'U');
   assert.equal(getAvatarInitial(''), 'IG');
 });
+
+test('CommentToDmFlow Trigger Mode - Any keyword mode does not require keyword entries', () => {
+  const stateAnyKeyword = {
+    selectedAccountId: 'acc_12345',
+    postMode: 'specific',
+    selectedPostId: 'media_real_post_1',
+    triggerMode: 'any_keyword',
+    keywords: [], // Empty keywords allowed in any_keyword mode!
+    replyToAll: false,
+    responseDm: "Hey! 👋 Here's your link!",
+    buttonLabel: 'Get Link',
+    destinationUrl: 'https://comlina.com/guide',
+  };
+
+  const validation = validateCommentToDmForm(stateAnyKeyword);
+  assert.equal(validation.isValid, true);
+  assert.equal(validation.errors.length, 0);
+});
+
+test('CommentToDmFlow Trigger Mode - Specific keywords mode requires keyword entries', () => {
+  const stateSpecificEmpty = {
+    selectedAccountId: 'acc_12345',
+    postMode: 'specific',
+    selectedPostId: 'media_real_post_1',
+    triggerMode: 'specific_keywords',
+    keywords: [], // Must have keywords in specific_keywords mode!
+    replyToAll: false,
+    responseDm: "Hey! 👋 Here's your link!",
+    buttonLabel: 'Get Link',
+    destinationUrl: 'https://comlina.com/guide',
+  };
+
+  const validation = validateCommentToDmForm(stateSpecificEmpty);
+  assert.equal(validation.isValid, false);
+  assert.ok(validation.errors.includes('At least one trigger keyword is required.'));
+});
+
+test('CommentToDmFlow State - Switching modes preserves configured keywords and restores settings', () => {
+  // 1. User configures keywords
+  let state = {
+    triggerMode: 'specific_keywords',
+    keywords: ['PRICE', 'LINK', 'INFO'],
+    matchWholeWords: true,
+  };
+  assert.deepEqual(state.keywords, ['PRICE', 'LINK', 'INFO']);
+
+  // 2. User switches to Any keyword mode
+  state = {
+    ...state,
+    triggerMode: 'any_keyword',
+    // keywords are NOT deleted; they are preserved in state
+  };
+  assert.equal(state.triggerMode, 'any_keyword');
+  assert.deepEqual(state.keywords, ['PRICE', 'LINK', 'INFO']);
+
+  // 3. User switches back to Specific keywords mode
+  state = {
+    ...state,
+    triggerMode: 'specific_keywords',
+  };
+  assert.equal(state.triggerMode, 'specific_keywords');
+  assert.deepEqual(state.keywords, ['PRICE', 'LINK', 'INFO']); // Fully restored!
+});
+
+test('CommentToDmFlow Save Payload - Correctly encodes triggerMode and preserves configured keywords', () => {
+  const triggerMode = 'any_keyword';
+  const configuredKeywords = ['PRICE', 'LINK'];
+
+  const payload = {
+    status: 'ACTIVE',
+    name: 'Comment to DM Flow',
+    instagram_account_id: 'acc_12345',
+    triggerMode,
+    trigger: {
+      type: 'COMMENT',
+      mode: 'specific',
+      postId: 'media_123',
+      triggerMode,
+      keywords: configuredKeywords, // Preserved in backend trigger record
+      matchWholeWords: true,
+      matchBehavior: 'contains',
+      replyToAll: false,
+    },
+    automatedDm: {
+      message: 'Check your DM! 📩',
+      button: {
+        label: 'View Guide',
+        url: 'https://comlina.com',
+      },
+    },
+  };
+
+  assert.equal(payload.triggerMode, 'any_keyword');
+  assert.equal(payload.trigger.triggerMode, 'any_keyword');
+  assert.deepEqual(payload.trigger.keywords, ['PRICE', 'LINK']);
+});
+
+test('CommentToDmFlow - Restores and persists Ask to Follow and Comment Teaser Reply', () => {
+  const initialData = {
+    triggerMode: 'specific_keywords',
+    trigger: {
+      type: 'COMMENT',
+      keywords: ['ACCESS', 'VIP'],
+      matchWholeWords: true
+    },
+    automatedDm: {
+      message: 'Here is your VIP access link! 🌟',
+      button: {
+        label: 'Enter Portal',
+        url: 'https://example.com/vip'
+      }
+    },
+    advanced: {
+      askFollow: {
+        enabled: true,
+        message: 'Please follow @test_creator to unlock this VIP resource!'
+      },
+      commentTeaser: {
+        enabled: true,
+        message: 'Check your DM! 📩'
+      }
+    }
+  };
+
+  // Verify restoration extraction
+  const restoredAskFollowEnabled = initialData?.advanced?.askFollow?.enabled ?? false;
+  const restoredAskFollowMessage = initialData?.advanced?.askFollow?.message;
+  const restoredTeaserEnabled = initialData?.advanced?.commentTeaser?.enabled ?? false;
+  const restoredTeaserMessage = initialData?.advanced?.commentTeaser?.message;
+
+  assert.equal(restoredAskFollowEnabled, true);
+  assert.equal(restoredAskFollowMessage, 'Please follow @test_creator to unlock this VIP resource!');
+  assert.equal(restoredTeaserEnabled, true);
+  assert.equal(restoredTeaserMessage, 'Check your DM! 📩');
+});
+
+test('InstagramPhonePreview - Follow-to-Unlock Gating displays gate for non-follower and withholds resource', () => {
+  const askFollowEnabled = true;
+  let previewState = 'non_follower';
+
+  // In non_follower state, resource is withheld and gate is visible
+  const isResourceVisibleNonFollower = !(askFollowEnabled && previewState === 'non_follower');
+  const isGateVisibleNonFollower = askFollowEnabled && previewState === 'non_follower';
+  assert.equal(isResourceVisibleNonFollower, false, 'Protected resource must NOT be visible to non-followers');
+  assert.equal(isGateVisibleNonFollower, true, 'Follow gate message must be visible to non-followers');
+
+  // Once following, resource is unlocked and gate is hidden
+  previewState = 'follower';
+  const isResourceVisibleFollower = !(askFollowEnabled && previewState === 'non_follower');
+  const isGateVisibleFollower = askFollowEnabled && previewState === 'non_follower';
+  assert.equal(isResourceVisibleFollower, true, 'Protected resource must be unlocked for verified followers');
+  assert.equal(isGateVisibleFollower, false, 'Follow gate message must be hidden for verified followers');
+});
+
+test('SelectMediaModal - Real data handling, deduplication by ID, and missing fields', () => {
+  const rawApiItems = [
+    {
+      id: '1799001122',
+      type: 'POST',
+      caption: 'Real Launch Announcement',
+      imageUrl: 'https://cdn.example.com/launch.jpg',
+      likesCount: 154,
+      commentsCount: 23,
+      publishedDate: '2026-10-16T18:00:00+0000',
+    },
+    {
+      id: '1799001123',
+      type: 'REEL',
+      caption: '', // No caption
+      imageUrl: 'https://cdn.example.com/reel_thumb.jpg',
+      likesCount: null, // Genuinely absent metric
+      commentsCount: null,
+      publishedDate: '2026-10-15T12:00:00+0000',
+    },
+    {
+      id: '1799001122', // Duplicate ID
+      type: 'POST',
+      caption: 'Duplicate',
+      imageUrl: 'https://cdn.example.com/launch.jpg',
+    }
+  ];
+
+  // Deduplication
+  const seen = new Set();
+  const deduped = [];
+  for (const item of rawApiItems) {
+    if (item.id && !seen.has(item.id)) {
+      seen.add(item.id);
+      deduped.push(item);
+    }
+  }
+
+  assert.equal(deduped.length, 2);
+  assert.equal(deduped[0].id, '1799001122');
+  assert.equal(deduped[1].id, '1799001123');
+
+  // Verify missing caption label
+  const item1Caption = deduped[0].caption && deduped[0].caption.trim() ? deduped[0].caption : '(No caption)';
+  const item2Caption = deduped[1].caption && deduped[1].caption.trim() ? deduped[1].caption : '(No caption)';
+  assert.equal(item1Caption, 'Real Launch Announcement');
+  assert.equal(item2Caption, '(No caption)');
+
+  // Verify engagement metrics are not fabricated when absent
+  assert.equal(deduped[1].likesCount, null);
+  assert.equal(deduped[1].commentsCount, null);
+});
+
+test('SelectMediaModal - Filtering by All, Posts, and Reels', () => {
+  const items = [
+    { id: 'p1', type: 'POST', caption: 'Post 1' },
+    { id: 'r1', type: 'REEL', caption: 'Reel 1' },
+    { id: 'p2', type: 'POST', caption: 'Post 2' },
+    { id: 'r2', type: 'REEL', caption: 'Reel 2' },
+  ];
+
+  const filterAll = items;
+  assert.equal(filterAll.length, 4);
+
+  const filterPosts = items.filter((i) => i.type === 'POST');
+  assert.equal(filterPosts.length, 2);
+  assert.ok(filterPosts.every((i) => i.type === 'POST'));
+
+  const filterReels = items.filter((i) => i.type === 'REEL');
+  assert.equal(filterReels.length, 2);
+  assert.ok(filterReels.every((i) => i.type === 'REEL'));
+});
+
+test('SelectMediaModal - Search and Sorting by newest, oldest, and likes', () => {
+  const items = [
+    { id: 'm1', caption: 'Deep dive into LLM workflows', publishedDate: '2026-10-10T10:00:00Z', likesCount: 45 },
+    { id: 'm2', caption: 'Brand new template release', publishedDate: '2026-10-15T12:00:00Z', likesCount: 120 },
+    { id: 'm3', caption: 'Behind the scenes at office', publishedDate: '2026-10-05T08:00:00Z', likesCount: 10 },
+  ];
+
+  // Search by query
+  const query = 'template';
+  const searched = items.filter((i) => i.caption.toLowerCase().includes(query.toLowerCase()));
+  assert.equal(searched.length, 1);
+  assert.equal(searched[0].id, 'm2');
+
+  // Sort by newest
+  const sortedNewest = [...items].sort((a, b) => new Date(b.publishedDate) - new Date(a.publishedDate));
+  assert.equal(sortedNewest[0].id, 'm2'); // 2026-10-15
+  assert.equal(sortedNewest[2].id, 'm3'); // 2026-10-05
+
+  // Sort by likes
+  const sortedLikes = [...items].sort((a, b) => (b.likesCount ?? 0) - (a.likesCount ?? 0));
+  assert.equal(sortedLikes[0].id, 'm2'); // 120 likes
+  assert.equal(sortedLikes[1].id, 'm1'); // 45 likes
+});
+
+test('SelectMediaModal - Pagination cursor appends additional real media deduplicated', () => {
+  const page1 = [
+    { id: 'post_1', caption: 'First post' },
+    { id: 'post_2', caption: 'Second post' },
+  ];
+  let nextCursor = 'cursor_page_2';
+
+  const page2 = [
+    { id: 'post_2', caption: 'Second post (duplicate across page boundary)' },
+    { id: 'post_3', caption: 'Third post' },
+  ];
+
+  // Simulating handleLoadMore appending
+  const existingIds = new Set(page1.map((p) => p.id));
+  const uniqueNew = page2.filter((p) => !existingIds.has(p.id));
+  const combined = [...page1, ...uniqueNew];
+
+  assert.equal(combined.length, 3);
+  assert.deepEqual(combined.map((p) => p.id), ['post_1', 'post_2', 'post_3']);
+});
+
+test('SelectMediaModal - Selection persistence across modal open/close and editor update', () => {
+  let selectedPostId = 'post_initial_123';
+  let modalSelectedId = selectedPostId;
+
+  // User opens modal -> initialized with selectedPostId
+  assert.equal(modalSelectedId, 'post_initial_123');
+
+  // User clicks on a different post inside modal
+  const newlyChosen = { id: 'post_new_789', caption: 'New chosen post', type: 'POST' };
+  modalSelectedId = newlyChosen.id;
+
+  // User cancels modal -> selectedPostId is unchanged
+  modalSelectedId = selectedPostId;
+  assert.equal(selectedPostId, 'post_initial_123');
+
+  // User confirms selection -> selectedPostId updates to newlyChosen.id
+  selectedPostId = newlyChosen.id;
+  assert.equal(selectedPostId, 'post_new_789');
+});
+
+

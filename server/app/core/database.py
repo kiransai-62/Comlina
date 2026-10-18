@@ -138,6 +138,11 @@ async def _apply_schema_patches(conn) -> None:
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
+            await conn.execute(text("""
+                ALTER TABLE contacts
+                ADD COLUMN IF NOT EXISTS automation_state VARCHAR(64);
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_contacts_automation_state ON contacts(automation_state);"))
         elif dialect_name == "sqlite":
             res = await conn.execute(text("PRAGMA table_info(instagram_accounts)"))
             existing_cols = {row[1] for row in res.fetchall()}
@@ -153,6 +158,11 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_refreshed_at TIMESTAMP"))
             if "last_error_code" not in existing_cols:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error_code TEXT"))
+
+            res_c = await conn.execute(text("PRAGMA table_info(contacts)"))
+            contact_cols = {row[1] for row in res_c.fetchall()}
+            if "automation_state" not in contact_cols:
+                await conn.execute(text("ALTER TABLE contacts ADD COLUMN automation_state TEXT"))
     except Exception as patch_err:
         logger.debug(f"[DB] Schema patch check notice: {patch_err}")
 

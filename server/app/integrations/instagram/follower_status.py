@@ -24,22 +24,24 @@ class InstagramFollowerService:
             return FollowerStatus.UNKNOWN, "Missing account IDs"
 
         try:
-            # Query Instagram Graph relationship API
+            # Query official Meta Instagram Graph API
             # GET /vXX.X/{user-id}?fields=is_user_follow_business
+            # Note: Meta requires active messaging consent to read is_user_follow_business on IGSID
             data = await self.client.get(
-                f"{business_ig_id}",
-                params={"fields": f"follows_business({commenter_ig_id})"}
+                f"{commenter_ig_id}",
+                params={"fields": "is_user_follow_business"}
             )
-            is_following = data.get("follows_business", False)
+            is_following = data.get("is_user_follow_business", False)
             if is_following:
-                return FollowerStatus.FOLLOWING, "Confirmed follower"
+                return FollowerStatus.FOLLOWING, "Confirmed follower via Meta Graph API"
             else:
-                return FollowerStatus.NOT_FOLLOWING, "Confirmed non-follower"
+                return FollowerStatus.NOT_FOLLOWING, "Confirmed non-follower via Meta Graph API"
         except MetaRateLimitError:
             # Safe degradation under Meta API rate pressure
             return FollowerStatus.CHECK_UNAVAILABLE, "Meta Rate Limit Exceeded"
         except MetaGraphAPIError as e:
-            # Private profile or Graph permission not granted
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Graph API Error: {str(e)}"
+            # Missing messaging consent (comment-only user) or permission not granted
+            return FollowerStatus.CHECK_UNAVAILABLE, f"Graph API Error (messaging consent required): {str(e)}"
         except Exception as e:
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Unexpected error: {str(e)}"
+            return FollowerStatus.CHECK_UNAVAILABLE, f"Unexpected error checking follower status: {str(e)}"
+

@@ -72,9 +72,11 @@ class ConnectAccountRequest(BaseModel):
 
 # --- Automation Schemas ---
 class FlowDefinitionSchema(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
     trigger: Dict[str, Any]
     conditions: Optional[List[Dict[str, Any]]] = []
-    actions: List[Dict[str, Any]] = Field(..., min_length=1, max_length=50)
+    actions: Optional[List[Dict[str, Any]]] = []
     nodes: Optional[List[Dict[str, Any]]] = []
 
 class AutomationCreate(BaseModel):

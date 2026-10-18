@@ -3,18 +3,24 @@ import re
 from typing import Dict, Any, List
 
 COMMENT_TRIGGER_TYPES = {"COMMENT", "COMMENT_TO_DM", "COMMENT_REPLY", "COMMENT_TO_LEAD"}
-MESSAGING_TRIGGER_TYPES = {"MESSAGING", "DM", "DM_REPLY", "DM_TO_LEAD"}
+MESSAGING_TRIGGER_TYPES = {"MESSAGING", "DM", "DM_REPLY", "DM_TO_LEAD", "STORY_REPLY", "STORY_MENTION"}
 
 class TriggerEngine:
     """
     Evaluates whether an incoming event satisfies an automation trigger.
     Supports both v1 (trigger dict) and v2 Studio playbooks
-    (COMMENT_TO_DM, COMMENT_REPLY, COMMENT_TO_LEAD, DM_REPLY).
+    (COMMENT_TO_DM, COMMENT_REPLY, COMMENT_TO_LEAD, DM_REPLY, STORY_REPLY, STORY_MENTION).
     """
     @staticmethod
-    def evaluate_trigger(trigger_config: Dict[str, Any], event_data: Dict[str, Any]) -> bool:
-        if not trigger_config:
+    def evaluate_trigger(flow_or_trigger: Dict[str, Any], event_data: Dict[str, Any]) -> bool:
+        if not flow_or_trigger:
             return False
+
+        # If full flow_definition is passed, extract trigger configuration
+        if isinstance(flow_or_trigger, dict) and "trigger" in flow_or_trigger and isinstance(flow_or_trigger["trigger"], dict):
+            trigger_config = flow_or_trigger["trigger"]
+        else:
+            trigger_config = flow_or_trigger
 
         trigger_type = str(trigger_config.get("type", "")).upper()
         event_type = str(event_data.get("event_type", "COMMENT")).upper()
@@ -34,8 +40,8 @@ class TriggerEngine:
                 return False
 
         # 2. Scope check (specific post vs all posts)
-        # v2 Studio: selectedPostId
-        selected_post_id = trigger_config.get("selectedPostId")
+        # v2 Studio: selectedPostId / postId
+        selected_post_id = trigger_config.get("selectedPostId") or trigger_config.get("postId")
         if selected_post_id and str(selected_post_id).strip().lower() not in ("all", "", "none"):
             current_post = str(event_data.get("post_id") or "")
             if current_post and current_post != str(selected_post_id).strip():
@@ -49,23 +55,48 @@ class TriggerEngine:
             if current_post and allowed_posts and current_post not in allowed_posts:
                 return False
 
-        # 3. Reply to all check (v2 Studio)
-        reply_to_all = trigger_config.get("replyToAll")
-        if reply_to_all is True:
-            return True
+        # 3. Explicit triggerMode check: "specific_keywords" vs "any_keyword"
+        trigger_mode = (
+            trigger_config.get("triggerMode")
+            or (isinstance(flow_or_trigger, dict) and flow_or_trigger.get("triggerMode"))
+            or ""
+        )
+        if isinstance(trigger_mode, str):
+            trigger_mode = trigger_mode.strip().lower()
 
-        # 4. Keyword matching
-        keywords = trigger_config.get("keywords")
-        if not keywords:
-            # If replyToAll is explicitly False and keywords is empty, do not trigger
-            if "replyToAll" in trigger_config and not trigger_config.get("replyToAll"):
-                return False
-            # In legacy v1 without keywords, trigger on all comments
+        if trigger_mode == "any_keyword":
+            # Enable automation for any eligible comment on the selected post or Reel,
+            # regardless of its text.
             return True
+        elif trigger_mode == "specific_keywords":
+            keywords = trigger_config.get("keywords") or []
+            if not keywords:
+                return False
+            # Fall through to keyword matching below
+        else:
+            # 4. Backward compatibility for legacy automations without explicit triggerMode
+            reply_to_all = trigger_config.get("replyToAll")
+            if reply_to_all is True:
+                return True
+
+            keywords = trigger_config.get("keywords")
+            if not keywords:
+                # If replyToAll is explicitly False and keywords is empty, do not trigger
+                if "replyToAll" in trigger_config and not trigger_config.get("replyToAll"):
+                    return False
+                # In legacy v1 without keywords, trigger on all comments
+                return True
+
+        # 5. Keyword matching (for specific_keywords mode or legacy keyword configs)
+        keywords = trigger_config.get("keywords") or []
+        if not keywords:
+            return False
 
         text = (event_data.get("text") or "").strip().lower()
         if not text:
             return False
+
+        match_whole_words = trigger_config.get("matchWholeWords", True)
 
         for kw in keywords:
             kw_str = str(kw).strip().lower()
@@ -74,9 +105,13 @@ class TriggerEngine:
 
             # Support single keywords (e.g. 'ai', 'link') and multi-word phrases (e.g. 'send me')
             try:
-                pattern = rf"\b{re.escape(kw_str)}\b"
-                if re.search(pattern, text, re.IGNORECASE):
-                    return True
+                if match_whole_words:
+                    pattern = rf"\b{re.escape(kw_str)}\b"
+                    if re.search(pattern, text, re.IGNORECASE):
+                        return True
+                else:
+                    if kw_str in text:
+                        return True
             except Exception:
                 if kw_str in text:
                     return True

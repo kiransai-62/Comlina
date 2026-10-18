@@ -106,6 +106,7 @@ class Contact(Base):
     email: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
     phone: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     follower_status: Mapped[str] = mapped_column(String(32), default="UNKNOWN", index=True)
+    automation_state: Mapped[Optional[str]] = mapped_column(String(64), nullable=True, default=None, index=True)
     is_converted: Mapped[bool] = mapped_column(Boolean, default=False, index=True)
     interaction_count: Mapped[int] = mapped_column(Integer, default=1)
     tags: Mapped[Any] = mapped_column(JSONB, default=["lead"])

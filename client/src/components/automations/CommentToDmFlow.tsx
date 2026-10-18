@@ -11,9 +11,7 @@ import {
   ChevronRight, 
   ChevronDown, 
   ChevronUp, 
-  Smile, 
   Image as ImageIcon, 
-  Link2, 
   MessageSquare, 
   Clock, 
   Repeat, 
@@ -21,9 +19,11 @@ import {
   Bookmark,
   Sparkles,
   AlertCircle,
-  ExternalLink
+  ExternalLink,
+  Lock
 } from 'lucide-react';
 import { InstagramMediaItem } from './PostSelector';
+import { SelectMediaModal } from './SelectMediaModal';
 import { instagramApi } from '@/features/instagram/api';
 import { useInstagramConnection } from '@/features/instagram';
 import { ConnectedInstagramAccount } from '@/features/instagram/types';
@@ -40,6 +40,7 @@ interface CommentToDmFlowProps {
   onSelectAccount?: (account: ConnectedInstagramAccount) => void;
   isSaving?: boolean;
   onPreviewChange?: (previewData: any) => void;
+  initialData?: any;
 }
 
 export function CommentToDmFlow({
@@ -51,6 +52,7 @@ export function CommentToDmFlow({
   onSelectAccount,
   isSaving = false,
   onPreviewChange,
+  initialData,
 }: CommentToDmFlowProps) {
   const { isLocked, openUpgradeModal } = usePlan();
   const showToast = useUIStore((s) => s.showToast);
@@ -97,7 +99,18 @@ export function CommentToDmFlow({
   const [selectedPostId, setSelectedPostId] = useState<string>('');
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const [postError, setPostError] = useState<string | null>(null);
+  const [isSeeAllOpen, setIsSeeAllOpen] = useState(false);
   const carouselRef = useRef<HTMLDivElement>(null);
+
+  const handleModalSelectMedia = (media: any) => {
+    setSelectedPostId(media.id);
+    setPosts((prev) => {
+      if (prev.some((p) => p.id === media.id)) return prev;
+      return [media as InstagramMediaItem, ...prev];
+    });
+    setIsSeeAllOpen(false);
+    showToast(`Selected post.`);
+  };
 
   const loadPostsForAccount = useCallback(async (targetAccountId?: string) => {
     if (!targetAccountId) {
@@ -169,15 +182,77 @@ export function CommentToDmFlow({
   // ══════════════════════════════════════════════════════════════
 
   // 2. Ask to Follow State (Premium)
-  const [askFollowEnabled, setAskFollowEnabled] = useState(false);
+  const [askFollowEnabled, setAskFollowEnabled] = useState(
+    initialData?.advanced?.askFollow?.enabled ?? initialData?.flow_definition?.advanced?.askFollow?.enabled ?? initialData?.askFollow?.enabled ?? initialData?.flow_definition?.askFollow?.enabled ?? false
+  );
   const [askFollowMessage, setAskFollowMessage] = useState(
-    'Please follow our account to get the guide!'
+    initialData?.advanced?.askFollow?.message || initialData?.flow_definition?.advanced?.askFollow?.message || initialData?.askFollow?.message || initialData?.flow_definition?.askFollow?.message || 'Please follow our account to get the guide!'
   );
 
-  // 3. Trigger Keywords State
-  const [keywords, setKeywords] = useState<string[]>(['PRICE', 'LINK', 'INFO']);
+  // 3. Trigger Keywords State & Mode
+  const [triggerMode, setTriggerMode] = useState<'specific_keywords' | 'any_keyword'>(
+    initialData?.trigger?.triggerMode || initialData?.flow_definition?.trigger?.triggerMode || initialData?.triggerMode || 'specific_keywords'
+  );
+  const [keywords, setKeywords] = useState<string[]>(
+    initialData?.trigger?.keywords || initialData?.flow_definition?.trigger?.keywords || initialData?.keywords || ['PRICE', 'LINK', 'INFO']
+  );
   const [keywordInput, setKeywordInput] = useState('');
-  const [matchWholeWords, setMatchWholeWords] = useState(true);
+  const [matchWholeWords, setMatchWholeWords] = useState<boolean>(
+    initialData?.trigger?.matchWholeWords ?? initialData?.flow_definition?.trigger?.matchWholeWords ?? true
+  );
+
+  // Sync / restore state if initialData is provided or updated
+  useEffect(() => {
+    if (initialData) {
+      const mode = initialData?.trigger?.triggerMode || initialData?.flow_definition?.trigger?.triggerMode || initialData?.triggerMode;
+      if (mode && (mode === 'specific_keywords' || mode === 'any_keyword')) {
+        setTriggerMode(mode);
+      }
+      const savedKeywords = initialData?.trigger?.keywords || initialData?.flow_definition?.trigger?.keywords || initialData?.keywords;
+      if (Array.isArray(savedKeywords) && savedKeywords.length > 0) {
+        setKeywords(savedKeywords);
+      }
+      if (initialData?.trigger?.matchWholeWords !== undefined) {
+        setMatchWholeWords(initialData.trigger.matchWholeWords);
+      } else if (initialData?.flow_definition?.trigger?.matchWholeWords !== undefined) {
+        setMatchWholeWords(initialData.flow_definition.trigger.matchWholeWords);
+      }
+      const savedDm = initialData?.automatedDm?.message || initialData?.deliveryText || initialData?.flow_definition?.automatedDm?.message;
+      if (savedDm) {
+        setResponseDm(savedDm);
+      }
+      const savedBtn = initialData?.automatedDm?.button?.label || initialData?.deliveryLinkButtonText || initialData?.flow_definition?.automatedDm?.button?.label;
+      if (savedBtn) {
+        setButtonLabel(savedBtn);
+      }
+      const savedUrl = initialData?.automatedDm?.button?.url || initialData?.deliveryLinkUrl || initialData?.flow_definition?.automatedDm?.button?.url;
+      if (savedUrl) {
+        setDestinationUrl(savedUrl);
+      }
+
+      // Restore Ask to Follow settings
+      const askFollowCfg = initialData?.advanced?.askFollow || initialData?.flow_definition?.advanced?.askFollow || initialData?.askFollow || initialData?.flow_definition?.askFollow;
+      if (askFollowCfg) {
+        if (askFollowCfg.enabled !== undefined) setAskFollowEnabled(Boolean(askFollowCfg.enabled));
+        if (askFollowCfg.message) setAskFollowMessage(askFollowCfg.message);
+      }
+
+      // Restore Comment Teaser settings (defaults to 'Check your DM! 📩')
+      const teaserCfg = initialData?.advanced?.commentTeaser || initialData?.flow_definition?.advanced?.commentTeaser || initialData?.teaserReply || initialData?.flow_definition?.teaserReply;
+      if (teaserCfg) {
+        if (teaserCfg.enabled !== undefined) setTeaserEnabled(Boolean(teaserCfg.enabled));
+        if (teaserCfg.message) setTeaserMessage(teaserCfg.message);
+      }
+
+      // Restore Follow Up settings
+      const followUpCfg = initialData?.advanced?.followUp || initialData?.flow_definition?.advanced?.followUp;
+      if (followUpCfg) {
+        if (followUpCfg.enabled !== undefined) setFollowUpEnabled(Boolean(followUpCfg.enabled));
+        if (followUpCfg.hours !== undefined) setFollowUpHours(Number(followUpCfg.hours));
+        if (followUpCfg.message) setFollowUpMessage(followUpCfg.message);
+      }
+    }
+  }, [initialData]);
 
   const handleAddKeyword = () => {
     const clean = keywordInput.trim().toUpperCase();
@@ -206,20 +281,30 @@ export function CommentToDmFlow({
   };
 
   // 4. Automated DM Message State
-  const [responseDm, setResponseDm] = useState('');
+  const [responseDm, setResponseDm] = useState(
+    initialData?.automatedDm?.message || initialData?.deliveryText || ''
+  );
 
   // 5. DM Buttons State
   const [buttonLabel, setButtonLabel] = useState('Hey! 👋...');
   const [destinationUrl, setDestinationUrl] = useState('');
 
   // 6. Advanced Settings State
-  const [matchBehavior, setMatchBehavior] = useState<'exact' | 'contains'>('contains');
-  const [teaserEnabled, setTeaserEnabled] = useState(false);
-  const [teaserMessage, setTeaserMessage] = useState('Check your DM! 📩');
-  const [followUpEnabled, setFollowUpEnabled] = useState(false);
-  const [followUpHours, setFollowUpHours] = useState(2);
+  const [matchBehavior, setMatchBehavior] = useState<'exact' | 'contains'>(initialData?.trigger?.matchBehavior || 'contains');
+  const [teaserEnabled, setTeaserEnabled] = useState(
+    initialData?.advanced?.commentTeaser?.enabled ?? initialData?.flow_definition?.advanced?.commentTeaser?.enabled ?? initialData?.teaserReply?.enabled ?? false
+  );
+  const [teaserMessage, setTeaserMessage] = useState(
+    initialData?.advanced?.commentTeaser?.message || initialData?.flow_definition?.advanced?.commentTeaser?.message || initialData?.teaserReply?.message || 'Check your DM! 📩'
+  );
+  const [followUpEnabled, setFollowUpEnabled] = useState(
+    initialData?.advanced?.followUp?.enabled ?? initialData?.flow_definition?.advanced?.followUp?.enabled ?? false
+  );
+  const [followUpHours, setFollowUpHours] = useState(
+    initialData?.advanced?.followUp?.hours ?? initialData?.flow_definition?.advanced?.followUp?.hours ?? 2
+  );
   const [followUpMessage, setFollowUpMessage] = useState(
-    'Hey! Just checking in — did you get a chance to look at what I sent? 😊'
+    initialData?.advanced?.followUp?.message || initialData?.flow_definition?.advanced?.followUp?.message || 'Hey! Just checking in — did you get a chance to look at what I sent? 😊'
   );
   const [replyToAll, setReplyToAll] = useState(false);
 
@@ -259,6 +344,7 @@ export function CommentToDmFlow({
   // Sync to Parent or External listeners
   useEffect(() => {
     onPreviewChange?.({
+      triggerMode,
       keywords,
       selectedPost: postMode === 'specific' ? selectedPost : null,
       deliveryText: responseDm,
@@ -275,6 +361,7 @@ export function CommentToDmFlow({
       accountName: activeAccountName,
     });
   }, [
+    triggerMode,
     keywords,
     selectedPost,
     postMode,
@@ -296,7 +383,7 @@ export function CommentToDmFlow({
   // Form Validation
   const isFormValid =
     !!selectedAccount &&
-    (replyToAll || keywords.length > 0) &&
+    (triggerMode === 'any_keyword' || replyToAll || keywords.length > 0) &&
     !!responseDm.trim() &&
     !!buttonLabel.trim() &&
     !!destinationUrl.trim() &&
@@ -317,14 +404,16 @@ export function CommentToDmFlow({
       status,
       name: 'Comment to DM Flow',
       instagram_account_id: selectedAccount.id,
+      triggerMode,
       trigger: {
         type: 'COMMENT',
         mode: postMode,
         postId: postMode === 'specific' ? selectedPostId : undefined,
-        keywords: replyToAll ? [] : keywords,
+        triggerMode,
+        keywords: keywords,
         matchWholeWords,
         matchBehavior,
-        replyToAll,
+        replyToAll: triggerMode === 'any_keyword' ? false : replyToAll,
       },
       automatedDm: {
         message: responseDm,
@@ -556,15 +645,33 @@ export function CommentToDmFlow({
                 <h2 className="text-sm sm:text-base font-bold text-[#111110]">Select Post</h2>
               </div>
 
-              <button
-                type="button"
-                onClick={handleRefreshPosts}
-                disabled={isLoadingPosts || !selectedAccountId}
-                className="inline-flex items-center gap-1.5 text-xs text-[#70706B] hover:text-[#111110] font-medium cursor-pointer transition-colors disabled:opacity-50"
-              >
-                <RefreshCw size={13} className={isLoadingPosts ? 'animate-spin' : ''} />
-                <span>Refresh</span>
-              </button>
+              <div className="flex items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => setIsSeeAllOpen(true)}
+                  disabled={!selectedAccountId}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-[#111110] bg-white border border-[#ECECE8] hover:bg-[#F4F4F0] rounded-xl shadow-2xs transition-all cursor-pointer disabled:opacity-50"
+                  title="Browse all posts and reels"
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" className="text-[#70706B]">
+                    <rect width="7" height="7" x="3" y="3" rx="1.5" />
+                    <rect width="7" height="7" x="14" y="3" rx="1.5" />
+                    <rect width="7" height="7" x="14" y="14" rx="1.5" />
+                    <rect width="7" height="7" x="3" y="14" rx="1.5" />
+                  </svg>
+                  <span>See all</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={handleRefreshPosts}
+                  disabled={isLoadingPosts || !selectedAccountId}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs text-[#70706B] hover:text-[#111110] font-medium cursor-pointer transition-colors disabled:opacity-50"
+                  title="Refresh posts"
+                >
+                  <RefreshCw size={13} className={isLoadingPosts ? 'animate-spin' : ''} />
+                  <span>Refresh</span>
+                </button>
+              </div>
             </div>
 
             {/* Pill Tabs: Specific Post | All Posts */}
@@ -667,6 +774,7 @@ export function CommentToDmFlow({
                   >
                     {posts.map((post) => {
                       const isSelected = selectedPostId === post.id;
+                      const hasLikes = post.likesCount !== null && post.likesCount !== undefined;
                       return (
                         <div
                           key={post.id}
@@ -682,11 +790,20 @@ export function CommentToDmFlow({
                                 : 'border border-[#ECECE8] hover:border-gray-400 opacity-80 hover:opacity-100'
                             }`}
                           >
-                            <img
-                              src={post.imageUrl}
-                              alt={post.caption || 'Instagram Post'}
-                              className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
-                            />
+                            {post.imageUrl ? (
+                              <img
+                                src={post.imageUrl}
+                                alt={post.caption || 'Instagram Post'}
+                                className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-200"
+                                onError={(e) => {
+                                  (e.target as HTMLElement).style.display = 'none';
+                                }}
+                              />
+                            ) : (
+                              <div className="w-full h-full flex items-center justify-center bg-[#F4F4F0] text-[#9E9E96]">
+                                <ImageIcon size={20} />
+                              </div>
+                            )}
                             {post.type === 'REEL' && (
                               <div className="absolute top-2 left-2 w-4 h-4 rounded-full bg-black/60 flex items-center justify-center text-white">
                                 <svg width="8" height="8" viewBox="0 0 24 24" fill="white">
@@ -705,11 +822,13 @@ export function CommentToDmFlow({
                           {isSelected && (
                             <div className="mt-2 text-left">
                               <div className="text-xs font-bold text-[#111110] truncate">
-                                {post.caption || '(No caption)'}
+                                {post.caption && post.caption.trim() ? post.caption : '(No caption)'}
                               </div>
                               <div className="text-[11px] text-[#70706B] mt-0.5">
-                                {post.publishedDate ? `${post.publishedDate} • ` : ''}
-                                {(post.likesCount ? (post.likesCount >= 1000 ? `${(post.likesCount / 1000).toFixed(1)}K` : post.likesCount) : '0')} likes
+                                {post.publishedDate ? `${post.publishedDate} ` : ''}
+                                {hasLikes && (
+                                  <span>• {post.likesCount} {post.likesCount === 1 ? 'like' : 'likes'}</span>
+                                )}
                               </div>
                             </div>
                           )}
@@ -792,7 +911,7 @@ export function CommentToDmFlow({
               3. TRIGGER KEYWORDS
           ══════════════════════════════════════════════════════════════ */}
           <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex items-center gap-2.5">
                 <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                   3
@@ -800,83 +919,138 @@ export function CommentToDmFlow({
                 <h2 className="text-sm sm:text-base font-bold text-[#111110]">Trigger Keywords</h2>
               </div>
 
-              <span className="text-xs font-medium text-[#70706B]">
-                {keywords.length} / 3 keywords
-              </span>
-            </div>
-
-            <div className="space-y-2 pt-1">
-              {/* Input Bar */}
-              <div className="flex items-center border border-[#ECECE8] bg-[#FBFBFA] rounded-xl px-3 py-1.5 focus-within:border-[#15803D] focus-within:bg-white transition-all shadow-2xs">
-                <input
-                  type="text"
-                  value={keywordInput}
-                  onChange={(e) => setKeywordInput(e.target.value)}
-                  onKeyDown={handleKeywordKeyDown}
-                  placeholder="Add keyword (e.g. PRICE, LINK, INFO) and press Enter"
-                  className="flex-1 bg-transparent text-xs text-[#111110] placeholder:text-[#9E9E96] outline-none py-1"
-                />
-                <button
-                  type="button"
-                  onClick={handleAddKeyword}
-                  className="text-xs font-bold text-[#111110] hover:text-[#064125] px-2.5 py-1 rounded bg-[#EAEAE5] hover:bg-[#E0E0DA] cursor-pointer transition-colors"
-                >
-                  Add
-                </button>
-              </div>
-            </div>
-
-            {/* Keyword Chips */}
-            <div className="flex flex-wrap items-center gap-2 pt-1">
-              {keywords.map((kw) => (
-                <span
-                  key={kw}
-                  className="inline-flex items-center gap-2 px-3 py-1 bg-[#F4F4F0] hover:bg-[#EAEAE5] text-[#111110] text-xs font-bold tracking-wide uppercase rounded-lg border border-[#ECECE8] transition-colors"
-                >
-                  <span>{kw}</span>
-                  <button
-                    type="button"
-                    onClick={() => handleRemoveKeyword(kw)}
-                    className="text-[#70706B] hover:text-red-600 cursor-pointer"
-                    title={`Remove ${kw}`}
-                  >
-                    <X size={13} />
-                  </button>
+              {triggerMode === 'specific_keywords' ? (
+                <span className="text-xs font-medium text-[#70706B]">
+                  {keywords.length} / 3 keywords
                 </span>
-              ))}
-              {keywords.length === 0 && (
-                <span className="text-xs text-amber-700 italic">
-                  No trigger keywords added yet. Add at least one keyword above.
+              ) : (
+                <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full bg-[#EAF6EE] text-[#15803D] text-[11px] font-semibold">
+                  All comments eligible
                 </span>
               )}
             </div>
 
-            {/* Match Whole Words Only Switch */}
-            <div className="pt-3 border-t border-[#F4F4F0] flex items-center justify-between gap-4">
-              <div>
-                <div className="text-xs font-bold text-[#111110]">
-                  Match whole words only
-                </div>
-                <p className="text-[11px] text-[#70706B] mt-0.5">
-                  When enabled, match complete keywords rather than parts of longer words.
-                </p>
-              </div>
-
+            {/* Trigger Mode Segmented Selector */}
+            <div className="flex items-center p-1 bg-[#F4F4F0] border border-[#ECECE8] rounded-xl max-w-xs shadow-2xs">
               <button
                 type="button"
-                onClick={() => setMatchWholeWords(!matchWholeWords)}
-                className={`w-10 h-5.5 rounded-full transition-colors relative cursor-pointer shrink-0 ${
-                  matchWholeWords ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                onClick={() => setTriggerMode('specific_keywords')}
+                className={`flex-1 py-1.5 px-3 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  triggerMode === 'specific_keywords'
+                    ? 'bg-[#062E1A] text-white shadow-2xs'
+                    : 'text-[#70706B] hover:text-[#111110]'
                 }`}
-                aria-label="Toggle Match whole words only"
               >
-                <span
-                  className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 rounded-full bg-white shadow-xs transition-transform ${
-                    matchWholeWords ? 'translate-x-4.5' : 'translate-x-0'
-                  }`}
-                />
+                Specific keywords
+              </button>
+              <button
+                type="button"
+                onClick={() => setTriggerMode('any_keyword')}
+                className={`flex-1 py-1.5 px-3 text-xs font-bold rounded-lg transition-all cursor-pointer ${
+                  triggerMode === 'any_keyword'
+                    ? 'bg-[#062E1A] text-white shadow-2xs'
+                    : 'text-[#70706B] hover:text-[#111110]'
+                }`}
+              >
+                Any keyword
               </button>
             </div>
+
+            {triggerMode === 'specific_keywords' ? (
+              <>
+                <div className="space-y-2 pt-1 animate-in fade-in duration-150">
+                  {/* Input Bar */}
+                  <div className="flex items-center border border-[#ECECE8] bg-[#FBFBFA] rounded-xl px-3 py-1.5 focus-within:border-[#15803D] focus-within:bg-white transition-all shadow-2xs">
+                    <input
+                      type="text"
+                      value={keywordInput}
+                      onChange={(e) => setKeywordInput(e.target.value)}
+                      onKeyDown={handleKeywordKeyDown}
+                      placeholder="Add keyword (e.g. PRICE, LINK, INFO) and press Enter"
+                      className="flex-1 bg-transparent text-xs text-[#111110] placeholder:text-[#9E9E96] outline-none py-1"
+                    />
+                    <button
+                      type="button"
+                      onClick={handleAddKeyword}
+                      className="text-xs font-bold text-[#111110] hover:text-[#064125] px-2.5 py-1 rounded bg-[#EAEAE5] hover:bg-[#E0E0DA] cursor-pointer transition-colors"
+                    >
+                      Add
+                    </button>
+                  </div>
+                </div>
+
+                {/* Keyword Chips */}
+                <div className="flex flex-wrap items-center gap-2 pt-1">
+                  {keywords.map((kw) => (
+                    <span
+                      key={kw}
+                      className="inline-flex items-center gap-2 px-3 py-1 bg-[#F4F4F0] hover:bg-[#EAEAE5] text-[#111110] text-xs font-bold tracking-wide uppercase rounded-lg border border-[#ECECE8] transition-colors"
+                    >
+                      <span>{kw}</span>
+                      <button
+                        type="button"
+                        onClick={() => handleRemoveKeyword(kw)}
+                        className="text-[#70706B] hover:text-red-600 cursor-pointer"
+                        title={`Remove ${kw}`}
+                      >
+                        <X size={13} />
+                      </button>
+                    </span>
+                  ))}
+                  {keywords.length === 0 && (
+                    <span className="text-xs text-amber-700 italic">
+                      No trigger keywords added yet. Add at least one keyword above.
+                    </span>
+                  )}
+                </div>
+
+                {/* Match Whole Words Only Switch */}
+                <div className="pt-3 border-t border-[#F4F4F0] flex items-center justify-between gap-4">
+                  <div>
+                    <div className="text-xs font-bold text-[#111110]">
+                      Match whole words only
+                    </div>
+                    <p className="text-[11px] text-[#70706B] mt-0.5">
+                      When enabled, match complete keywords rather than parts of longer words.
+                    </p>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => setMatchWholeWords(!matchWholeWords)}
+                    className={`w-10 h-5.5 rounded-full transition-colors relative cursor-pointer shrink-0 ${
+                      matchWholeWords ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
+                    }`}
+                    aria-label="Toggle Match whole words only"
+                  >
+                    <span
+                      className={`absolute top-0.5 left-0.5 w-4.5 h-4.5 rounded-full bg-white shadow-xs transition-transform ${
+                        matchWholeWords ? 'translate-x-4.5' : 'translate-x-0'
+                      }`}
+                    />
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="p-4 rounded-xl bg-[#FBFBFA] border border-[#ECECE8] flex items-start gap-3 text-xs animate-in fade-in duration-150">
+                <div className="w-8 h-8 rounded-lg bg-[#EAF6EE] text-[#15803D] flex items-center justify-center shrink-0 mt-0.5">
+                  <Sparkles size={16} />
+                </div>
+                <div className="space-y-1">
+                  <div className="font-bold text-[#111110]">
+                    Trigger for any comment
+                  </div>
+                  <p className="text-[#70706B] leading-relaxed">
+                    This automation triggers for any eligible comment on your selected post or Reel, regardless of what the user writes.
+                  </p>
+                  {keywords.length > 0 && (
+                    <p className="text-[11px] text-[#9E9E96] pt-0.5">
+                      Your {keywords.length} previously configured {keywords.length === 1 ? 'keyword is' : 'keywords are'} saved and will be restored if you switch back to Specific keywords.
+                    </p>
+                  )}
+                </div>
+              </div>
+            )}
           </section>
 
           {/* ══════════════════════════════════════════════════════════════
@@ -902,32 +1076,7 @@ export function CommentToDmFlow({
                 />
 
                 {/* Bottom Toolbar & Character Count */}
-                <div className="flex items-center justify-between pt-2 border-t border-[#F4F4F0] mt-2 flex-wrap gap-2">
-                  <div className="flex items-center gap-2.5 text-[#70706B]">
-                    <button
-                      type="button"
-                      onClick={() => setResponseDm((prev) => `${prev} 😊`)}
-                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
-                      title="Add emoji"
-                    >
-                      <Smile size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
-                      title="Attach image"
-                    >
-                      <ImageIcon size={16} />
-                    </button>
-                    <button
-                      type="button"
-                      className="hover:text-[#111110] p-1 rounded cursor-pointer transition-colors"
-                      title="Insert link"
-                    >
-                      <Link2 size={16} />
-                    </button>
-                  </div>
-
+                <div className="flex items-center justify-end pt-2 border-t border-[#F4F4F0] mt-2">
                   <div className="flex items-center gap-1.5 text-[11px] text-[#70706B]">
                     <span>Message length</span>
                     <span className="font-mono font-semibold text-[#111110]">
@@ -1087,11 +1236,11 @@ export function CommentToDmFlow({
                           Comment Teaser Reply
                         </span>
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          ⚡ PREMIUM
+                          PREMIUM
                         </span>
                       </div>
                       <p className="text-[11px] text-[#70706B] mt-0.5">
-                        Post a public reply (&ldquo;Check your DM! 📩&rdquo;) to boost post engagement algorithmically.
+                        write your public reply (&ldquo;eg. Check your DM! 📩&rdquo;) 
                       </p>
                     </div>
                   </div>
@@ -1129,7 +1278,7 @@ export function CommentToDmFlow({
                       type="text"
                       value={teaserMessage}
                       onChange={(e) => setTeaserMessage(e.target.value)}
-                      placeholder="Check your DM! 📩"
+                      placeholder="eg. Check your DM! 📩"
                       className="w-full px-3 py-2 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#15803D]"
                     />
                   </div>
@@ -1147,7 +1296,7 @@ export function CommentToDmFlow({
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[#111110]">Follow-up DMs</span>
                         <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          ⚡ PREMIUM
+                          PREMIUM
                         </span>
                       </div>
                       <p className="text-[11px] text-[#70706B] mt-0.5">
@@ -1212,9 +1361,9 @@ export function CommentToDmFlow({
                 )}
               </div>
 
-              {/* CARD E: REPLY TO ALL COMMENTS (PREMIUM) */}
-              <div className="border border-[#ECECE8] rounded-2xl overflow-hidden transition-all">
-                <div className="p-4 flex items-center justify-between gap-3 bg-white">
+              {/* CARD E: REPLY TO ALL COMMENTS (LOCKED - COMING SOON) */}
+              <div className="border border-[#ECECE8] rounded-2xl overflow-hidden transition-all bg-[#FCFCFA]/80">
+                <div className="p-4 flex items-center justify-between gap-3">
                   <div className="flex items-center gap-3">
                     <div className="w-8 h-8 rounded-xl bg-amber-50 text-[#D97706] flex items-center justify-center shrink-0">
                       <Repeat size={18} />
@@ -1222,8 +1371,9 @@ export function CommentToDmFlow({
                     <div>
                       <div className="flex items-center gap-2">
                         <span className="text-xs font-bold text-[#111110]">Reply to All Comments</span>
-                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider">
-                          ⚡ PREMIUM
+                        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full shadow-2xs">
+                          <Lock size={10} className="text-[#B45309]" />
+                          <span>Coming soon...</span>
                         </span>
                       </div>
                       <p className="text-[11px] text-[#70706B] mt-0.5">
@@ -1234,16 +1384,14 @@ export function CommentToDmFlow({
 
                   <button
                     type="button"
-                    onClick={() => setReplyToAll(!replyToAll)}
-                    className={`w-9 h-5 rounded-full transition-colors relative cursor-pointer ${
-                      replyToAll ? 'bg-[#22C55E]' : 'bg-[#D1D1CB]'
-                    }`}
+                    disabled
+                    title="Coming soon..."
+                    onClick={() => showToast('Reply to All Comments is coming soon!')}
+                    className="w-9 h-5 rounded-full bg-[#E5E5E0] relative cursor-not-allowed opacity-60 transition-colors"
                   >
-                    <span
-                      className={`absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform ${
-                        replyToAll ? 'translate-x-4' : 'translate-x-0'
-                      }`}
-                    />
+                    <span className="absolute top-0.5 left-0.5 w-4 h-4 rounded-full bg-white transition-transform translate-x-0 flex items-center justify-center shadow-2xs">
+                      <Lock size={8} className="text-[#9E9E96]" />
+                    </span>
                   </button>
                 </div>
               </div>
@@ -1276,6 +1424,7 @@ export function CommentToDmFlow({
                   avatarUrl={activeAvatarUrl}
                   selectedPost={postMode === 'specific' ? selectedPost : null}
                   keywords={keywords}
+                  triggerMode={triggerMode}
                   deliveryText={responseDm}
                   deliveryLinkButtonText={buttonLabel}
                   deliveryLinkUrl={destinationUrl}
@@ -1308,6 +1457,7 @@ export function CommentToDmFlow({
               avatarUrl={activeAvatarUrl}
               selectedPost={postMode === 'specific' ? selectedPost : null}
               keywords={keywords}
+              triggerMode={triggerMode}
               deliveryText={responseDm}
               deliveryLinkButtonText={buttonLabel}
               deliveryLinkUrl={destinationUrl}
@@ -1337,6 +1487,17 @@ export function CommentToDmFlow({
           </div>
         </aside>
       </div>
+
+      {/* See All Media Modal */}
+      <SelectMediaModal
+        isOpen={isSeeAllOpen}
+        onClose={() => setIsSeeAllOpen(false)}
+        selectedMediaId={selectedPostId}
+        onSelectMedia={handleModalSelectMedia}
+        accountId={selectedAccountId}
+        accountUsername={activeAccountName}
+        onReconnect={startConnect}
+      />
     </div>
   );
 }
