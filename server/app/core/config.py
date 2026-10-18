@@ -117,6 +117,7 @@ class Settings(BaseSettings):
 
     # Proxy trust & dev settings
     TRUSTED_PROXY_COUNT: int = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
+    FAIL_CLOSED_ON_REDIS_DOWN: bool = os.getenv("FAIL_CLOSED_ON_REDIS_DOWN", "false").lower() in ("true", "1", "yes")
     ENABLE_DEV_ROUTES: bool = os.getenv("ENABLE_DEV_ROUTES", "false").lower() in ("true", "1", "yes")
 
     # CORS & Allowed Origins
