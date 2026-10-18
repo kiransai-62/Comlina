@@ -3,6 +3,7 @@ import React from 'react';
 import Link from 'next/link';
 import { 
   Mail, 
+  Phone,
   Clock, 
   ShieldCheck, 
   FileText, 
@@ -119,8 +120,20 @@ export default function ContactLegalPage() {
                 <div className="flex items-start gap-2.5">
                   <Mail size={15} className="text-[#6D28D9] shrink-0 mt-0.5" />
                   <div>
-                    <h4 className="text-xs font-semibold text-[#5B21B6]">Direct Email Contacts</h4>
+                    <h4 className="text-xs font-semibold text-[#5B21B6]">Direct Contacts</h4>
                     <div className="space-y-1 mt-1 text-[11px]">
+                      <div>
+                        <span className="text-[#71717A]">Official: </span>
+                        <a href="mailto:kiransai.challala@gmail.com" className="font-semibold text-[#6D28D9] hover:underline">
+                          kiransai.challala@gmail.com
+                        </a>
+                      </div>
+                      <div>
+                        <span className="text-[#71717A]">Phone: </span>
+                        <a href="tel:+919014736476" className="font-semibold text-[#6D28D9] hover:underline">
+                          +91 9014736476
+                        </a>
+                      </div>
                       <div>
                         <span className="text-[#71717A]">Support: </span>
                         <a href="mailto:support@comlina.ai" className="font-semibold text-[#6D28D9] hover:underline">
@@ -131,12 +144,6 @@ export default function ContactLegalPage() {
                         <span className="text-[#71717A]">Billing: </span>
                         <a href="mailto:billing@comlina.com" className="font-semibold text-[#6D28D9] hover:underline">
                           billing@comlina.com
-                        </a>
-                      </div>
-                      <div>
-                        <span className="text-[#71717A]">Privacy: </span>
-                        <a href="mailto:privacy@comlina.com" className="font-semibold text-[#6D28D9] hover:underline">
-                          privacy@comlina.com
                         </a>
                       </div>
                     </div>
@@ -173,11 +180,23 @@ export default function ContactLegalPage() {
                 </div>
                 <div className="p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                   <span className="font-semibold text-[#71717A]">Operator / Legal Name</span>
-                  <span className="font-bold text-[#18181B]">Comlina Technologies</span>
+                  <span className="font-bold text-[#18181B]">Challala Kiran Sai (Comlina)</span>
+                </div>
+                <div className="p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="font-semibold text-[#71717A]">Official Email</span>
+                  <a href="mailto:kiransai.challala@gmail.com" className="text-[#6D28D9] font-semibold hover:underline">
+                    kiransai.challala@gmail.com
+                  </a>
+                </div>
+                <div className="p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
+                  <span className="font-semibold text-[#71717A]">Telephone / Helpline</span>
+                  <a href="tel:+919014736476" className="text-[#6D28D9] font-semibold hover:underline">
+                    +91 9014736476
+                  </a>
                 </div>
                 <div className="p-3 sm:p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-1">
                   <span className="font-semibold text-[#71717A]">Business Type</span>
-                  <span className="text-[#3F3F46]">Registered Technology Entity / Commercial SaaS Provider</span>
+                  <span className="text-[#3F3F46]">Sole Proprietorship / Commercial SaaS Provider</span>
                 </div>
               </div>
               <p className="text-xs text-[#71717A] leading-relaxed italic">
@@ -197,13 +216,25 @@ export default function ContactLegalPage() {
                 For general questions, technical issues, account access, and product assistance:
               </p>
 
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-xs">
                 <div className="p-3.5 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5] space-y-1">
                   <Mail size={16} className="text-[#6D28D9]" />
-                  <span className="font-semibold text-[#18181B] block">Support Email</span>
-                  <a href="mailto:support@comlina.ai" className="text-[#6D28D9] font-semibold hover:underline block truncate">
+                  <span className="font-semibold text-[#18181B] block">Email Support</span>
+                  <a href="mailto:kiransai.challala@gmail.com" className="text-[#6D28D9] font-semibold hover:underline block truncate">
+                    kiransai.challala@gmail.com
+                  </a>
+                  <a href="mailto:support@comlina.ai" className="text-[#71717A] hover:underline block truncate text-[11px]">
                     support@comlina.ai
                   </a>
+                </div>
+
+                <div className="p-3.5 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5] space-y-1">
+                  <Phone size={16} className="text-[#6D28D9]" />
+                  <span className="font-semibold text-[#18181B] block">Phone Support</span>
+                  <a href="tel:+919014736476" className="text-[#6D28D9] font-semibold hover:underline block">
+                    +91 9014736476
+                  </a>
+                  <span className="text-[#71717A] text-[11px] block">Direct helpline &amp; WhatsApp</span>
                 </div>
 
                 <div className="p-3.5 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5] space-y-1">
@@ -357,14 +388,30 @@ export default function ContactLegalPage() {
 
               <div className="space-y-3 p-4 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5] text-xs">
                 <div>
-                  <span className="font-semibold text-[#71717A] block">Legal Contact:</span>
-                  <a href="mailto:legal@comlina.com" className="text-[#6D28D9] font-semibold hover:underline">
-                    legal@comlina.com
-                  </a>
+                  <span className="font-semibold text-[#71717A] block">Legal Operator / Proprietor:</span>
+                  <span className="font-bold text-[#18181B]">Challala Kiran Sai (Comlina)</span>
                 </div>
                 <div>
-                  <span className="font-semibold text-[#71717A] block">Legal Operator Name:</span>
-                  <span className="font-bold text-[#18181B]">Comlina Technologies</span>
+                  <span className="font-semibold text-[#71717A] block">Official &amp; Legal Email:</span>
+                  <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
+                    <a href="mailto:kiransai.challala@gmail.com" className="text-[#6D28D9] font-semibold hover:underline">
+                      kiransai.challala@gmail.com
+                    </a>
+                    <span className="text-[#D4D4D8]">•</span>
+                    <a href="mailto:legal@comlina.com" className="text-[#6D28D9] font-semibold hover:underline">
+                      legal@comlina.com
+                    </a>
+                    <span className="text-[#D4D4D8]">•</span>
+                    <a href="mailto:support@comlina.ai" className="text-[#6D28D9] font-semibold hover:underline">
+                      support@comlina.ai
+                    </a>
+                  </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-[#71717A] block">Official Telephone:</span>
+                  <a href="tel:+919014736476" className="text-[#6D28D9] font-semibold hover:underline">
+                    +91 9014736476
+                  </a>
                 </div>
                 <div>
                   <span className="font-semibold text-[#71717A] block">Business / Correspondence Address:</span>

@@ -9,6 +9,7 @@ import {
   Users, 
   Globe, 
   Mail, 
+  Phone,
   Trash2, 
   CreditCard, 
   ExternalLink, 
@@ -480,7 +481,7 @@ export default function PrivacyPolicyPage() {
                   <Shield size={16} className="text-[#6D28D9] shrink-0 mt-0.5" />
                   <div>
                     <span className="font-semibold text-[#18181B] block">Operator / Legal Name:</span>
-                    <span className="text-[#52525B]">Comlina Technologies</span>
+                    <span className="font-semibold text-[#18181B]">Challala Kiran Sai (Comlina)</span>
                   </div>
                 </div>
 
@@ -489,14 +490,28 @@ export default function PrivacyPolicyPage() {
                   <div>
                     <span className="font-semibold text-[#18181B] block">Official Privacy &amp; Support Email:</span>
                     <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
-                      <a href="mailto:privacy@comlina.com" className="text-[#6D28D9] hover:underline font-semibold">
-                        privacy@comlina.com
+                      <a href="mailto:kiransai.challala@gmail.com" className="text-[#6D28D9] hover:underline font-semibold">
+                        kiransai.challala@gmail.com
                       </a>
                       <span className="text-[#D4D4D8]">•</span>
                       <a href="mailto:support@comlina.ai" className="text-[#6D28D9] hover:underline font-semibold">
                         support@comlina.ai
                       </a>
+                      <span className="text-[#D4D4D8]">•</span>
+                      <a href="mailto:privacy@comlina.com" className="text-[#6D28D9] hover:underline font-semibold">
+                        privacy@comlina.com
+                      </a>
                     </div>
+                  </div>
+                </div>
+
+                <div className="flex items-start gap-2.5">
+                  <Phone size={16} className="text-[#6D28D9] shrink-0 mt-0.5" />
+                  <div>
+                    <span className="font-semibold text-[#18181B] block">Contact Telephone:</span>
+                    <a href="tel:+919014736476" className="text-[#6D28D9] hover:underline font-semibold">
+                      +91 9014736476
+                    </a>
                   </div>
                 </div>
 

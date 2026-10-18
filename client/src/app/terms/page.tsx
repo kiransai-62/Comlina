@@ -91,12 +91,30 @@ export default function TermsOfServicePage() {
 
           <section className="space-y-3">
             <h2 className="text-base font-bold text-[#111110]">6. Contact &amp; Legal Notices</h2>
-            <p className="text-xs text-[#555550]">
-              Direct legal correspondence and terms inquiries to{' '}
-              <a href="mailto:legal@comlina.com" className="text-[#15803D] font-semibold hover:underline">
-                legal@comlina.com
-              </a>.
-            </p>
+            <div className="text-xs text-[#555550] space-y-1.5 p-4 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5]">
+              <p>
+                <strong className="text-[#18181B]">Operator / Legal Entity:</strong> Challala Kiran Sai (Comlina)
+              </p>
+              <p>
+                <strong className="text-[#18181B]">Official Contact Email:</strong>{' '}
+                <a href="mailto:kiransai.challala@gmail.com" className="text-[#15803D] font-semibold hover:underline">
+                  kiransai.challala@gmail.com
+                </a>{' '}
+                (or{' '}
+                <a href="mailto:support@comlina.ai" className="text-[#15803D] font-semibold hover:underline">
+                  support@comlina.ai
+                </a>)
+              </p>
+              <p>
+                <strong className="text-[#18181B]">Telephone / Helpline:</strong>{' '}
+                <a href="tel:+919014736476" className="text-[#15803D] font-semibold hover:underline">
+                  +91 9014736476
+                </a>
+              </p>
+              <p>
+                <strong className="text-[#18181B]">Address:</strong> HSR Layout, Bengaluru, Karnataka, India 560102
+              </p>
+            </div>
           </section>
         </div>
       </main>
@@ -114,6 +132,9 @@ export default function TermsOfServicePage() {
             </Link>
             <Link href="/refund" className="hover:text-[#111110] transition-colors">
               Refund &amp; Cancellation Policy
+            </Link>
+            <Link href="/contact" className="hover:text-[#111110] transition-colors">
+              Contact &amp; Legal
             </Link>
             <Link href="/data-deletion-status" className="hover:text-[#111110] transition-colors">
               Data Deletion Status

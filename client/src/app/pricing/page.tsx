@@ -174,6 +174,9 @@ export default function PricingPage() {
             <Link href="/refund" className="hover:text-[#111110] transition-colors">
               Refund &amp; Cancellation Policy
             </Link>
+            <Link href="/contact" className="hover:text-[#111110] transition-colors">
+              Contact &amp; Legal
+            </Link>
             <Link href="/data-deletion-status" className="hover:text-[#111110] transition-colors">
               Data Deletion Status
             </Link>

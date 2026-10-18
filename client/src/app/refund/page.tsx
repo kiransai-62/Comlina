@@ -7,6 +7,7 @@ import {
   FileText, 
   ShieldCheck, 
   Mail, 
+  Phone,
   Info, 
   RefreshCw, 
   Check, 
@@ -420,11 +421,15 @@ export default function RefundPolicyPage() {
               <div className="space-y-3 p-4 rounded-xl bg-[#FAFAFA] border border-[#F4F4F5] text-xs">
                 <div>
                   <span className="font-semibold text-[#18181B] block">Operator / Legal Name:</span>
-                  <span className="text-[#52525B]">Comlina Technologies</span>
+                  <span className="font-semibold text-[#18181B]">Challala Kiran Sai (Comlina)</span>
                 </div>
                 <div>
-                  <span className="font-semibold text-[#18181B] block">Official Billing &amp; Support Email:</span>
+                  <span className="font-semibold text-[#18181B] block">Official Email:</span>
                   <div className="flex flex-wrap gap-x-3 gap-y-1 mt-0.5">
+                    <a href="mailto:kiransai.challala@gmail.com" className="text-[#6D28D9] hover:underline font-semibold">
+                      kiransai.challala@gmail.com
+                    </a>
+                    <span className="text-[#D4D4D8]">•</span>
                     <a href="mailto:support@comlina.ai" className="text-[#6D28D9] hover:underline font-semibold">
                       support@comlina.ai
                     </a>
@@ -433,6 +438,12 @@ export default function RefundPolicyPage() {
                       billing@comlina.com
                     </a>
                   </div>
+                </div>
+                <div>
+                  <span className="font-semibold text-[#18181B] block">Telephone / Contact:</span>
+                  <a href="tel:+919014736476" className="text-[#6D28D9] hover:underline font-semibold">
+                    +91 9014736476
+                  </a>
                 </div>
                 <div>
                   <span className="font-semibold text-[#18181B] block">Business Address:</span>
@@ -460,6 +471,9 @@ export default function RefundPolicyPage() {
             </Link>
             <Link href="/refund" className="text-[#18181B] font-semibold">
               Refund &amp; Cancellation Policy
+            </Link>
+            <Link href="/contact" className="hover:text-[#18181B] transition-colors">
+              Contact &amp; Legal
             </Link>
             <Link href="/data-deletion-status" className="hover:text-[#18181B] transition-colors">
               Data Deletion Status
