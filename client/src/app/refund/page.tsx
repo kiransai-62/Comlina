@@ -463,19 +463,19 @@ export default function RefundPolicyPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Comlina. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <Link href="/privacy" className="hover:text-[#18181B] transition-colors">
+            <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Privacy Policy
             </Link>
-            <Link href="/terms" className="hover:text-[#18181B] transition-colors">
+            <Link href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Terms of Service
             </Link>
-            <Link href="/refund" className="text-[#18181B] font-semibold">
+            <Link href="/refund" target="_blank" rel="noopener noreferrer" className="text-[#18181B] font-semibold">
               Refund &amp; Cancellation Policy
             </Link>
             <Link href="/contact" className="hover:text-[#18181B] transition-colors">
               Contact &amp; Legal
             </Link>
-            <Link href="/data-deletion-status" className="hover:text-[#18181B] transition-colors">
+            <Link href="/data-deletion-status" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Data Deletion Status
             </Link>
             <Link href="/pricing" className="hover:text-[#18181B] transition-colors">

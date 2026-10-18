@@ -314,7 +314,7 @@ export default function ContactLegalPage() {
 
               <p className="text-xs text-[#71717A] italic leading-relaxed">
                 All payments are subject to the applicable checkout terms, subscription conditions, and the{' '}
-                <Link href="/refund" className="text-[#6D28D9] font-semibold underline">
+                <Link href="/refund" target="_blank" rel="noopener noreferrer" className="text-[#6D28D9] font-semibold underline">
                   Refund &amp; Cancellation Policy
                 </Link>.
               </p>
@@ -358,6 +358,8 @@ export default function ContactLegalPage() {
                 </div>
                 <Link
                   href="/data-deletion-status"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-[#5B21B6] hover:bg-[#4C1D95] text-white font-semibold shrink-0"
                 >
                   <span>Check Status</span>
@@ -367,7 +369,7 @@ export default function ContactLegalPage() {
 
               <p className="text-xs text-[#71717A] italic">
                 Privacy requests will be reviewed and handled according to our{' '}
-                <Link href="/privacy" className="text-[#6D28D9] font-semibold underline">
+                <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="text-[#6D28D9] font-semibold underline">
                   Privacy Policy
                 </Link>{' '}
                 and applicable law.
@@ -460,6 +462,8 @@ export default function ContactLegalPage() {
                   <Link
                     key={idx}
                     href={doc.href}
+                    target="_blank"
+                    rel="noopener noreferrer"
                     className="p-3.5 rounded-xl border border-[#E4E4E7] bg-[#FAFAFA] hover:bg-white hover:border-[#6D28D9] transition-all group flex flex-col justify-between"
                   >
                     <div>
@@ -520,19 +524,19 @@ export default function ContactLegalPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Comlina. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <Link href="/privacy" className="hover:text-[#18181B] transition-colors">
+            <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Privacy Policy
             </Link>
-            <Link href="/terms" className="hover:text-[#18181B] transition-colors">
+            <Link href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Terms of Service
             </Link>
-            <Link href="/refund" className="hover:text-[#18181B] transition-colors">
+            <Link href="/refund" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Refund &amp; Cancellation Policy
             </Link>
             <Link href="/contact" className="text-[#18181B] font-semibold">
               Contact &amp; Legal
             </Link>
-            <Link href="/data-deletion-status" className="hover:text-[#18181B] transition-colors">
+            <Link href="/data-deletion-status" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Data Deletion Status
             </Link>
             <Link href="/pricing" className="hover:text-[#18181B] transition-colors">

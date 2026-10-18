@@ -124,19 +124,19 @@ export default function TermsOfServicePage() {
         <div className="max-w-4xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Comlina. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <Link href="/privacy" className="hover:text-[#111110] transition-colors">
+            <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="hover:text-[#111110] transition-colors">
               Privacy Policy
             </Link>
-            <Link href="/terms" className="text-[#111110] font-semibold">
+            <Link href="/terms" target="_blank" rel="noopener noreferrer" className="text-[#111110] font-semibold">
               Terms of Service
             </Link>
-            <Link href="/refund" className="hover:text-[#111110] transition-colors">
+            <Link href="/refund" target="_blank" rel="noopener noreferrer" className="hover:text-[#111110] transition-colors">
               Refund &amp; Cancellation Policy
             </Link>
             <Link href="/contact" className="hover:text-[#111110] transition-colors">
               Contact &amp; Legal
             </Link>
-            <Link href="/data-deletion-status" className="hover:text-[#111110] transition-colors">
+            <Link href="/data-deletion-status" target="_blank" rel="noopener noreferrer" className="hover:text-[#111110] transition-colors">
               Data Deletion Status
             </Link>
             <Link href="/pricing" className="hover:text-[#111110] transition-colors">

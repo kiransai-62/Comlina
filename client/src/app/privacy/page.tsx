@@ -131,6 +131,8 @@ export default function PrivacyPolicyPage() {
                     </p>
                     <Link
                       href="/data-deletion-status"
+                      target="_blank"
+                      rel="noopener noreferrer"
                       className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#6D28D9] hover:underline mt-1.5"
                     >
                       <span>Check Deletion Status</span>
@@ -417,6 +419,8 @@ export default function PrivacyPolicyPage() {
                 </div>
                 <Link
                   href="/data-deletion-status"
+                  target="_blank"
+                  rel="noopener noreferrer"
                   className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg bg-[#5B21B6] text-white hover:bg-[#4C1D95] transition-colors shrink-0"
                 >
                   <span>View Status Portal</span>
@@ -537,19 +541,19 @@ export default function PrivacyPolicyPage() {
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Comlina. All rights reserved.</p>
           <div className="flex items-center gap-6">
-            <Link href="/privacy" className="text-[#18181B] font-semibold">
+            <Link href="/privacy" target="_blank" rel="noopener noreferrer" className="text-[#18181B] font-semibold">
               Privacy Policy
             </Link>
-            <Link href="/terms" className="hover:text-[#18181B] transition-colors">
+            <Link href="/terms" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Terms of Service
             </Link>
-            <Link href="/refund" className="hover:text-[#18181B] transition-colors">
+            <Link href="/refund" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Refund Policy
             </Link>
             <Link href="/contact" className="hover:text-[#18181B] transition-colors">
               Contact &amp; Legal
             </Link>
-            <Link href="/data-deletion-status" className="hover:text-[#18181B] transition-colors">
+            <Link href="/data-deletion-status" target="_blank" rel="noopener noreferrer" className="hover:text-[#18181B] transition-colors">
               Data Deletion Status
             </Link>
             <Link href="/pricing" className="hover:text-[#18181B] transition-colors">
