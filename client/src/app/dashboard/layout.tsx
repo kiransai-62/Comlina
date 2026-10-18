@@ -33,12 +33,12 @@ export default function DashboardLayout({
 
           <div className="flex-1 flex flex-col min-w-0 overflow-hidden">
             <TopHeader />
-            <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-24 lg:pb-8">
+            <main className="flex-1 overflow-y-auto p-4 sm:p-6 lg:p-8 pb-20 md:pb-6 lg:pb-8">
               {children}
             </main>
           </div>
 
-          {/* Bottom Navigation for Mobile & Tablet (< 1024px) */}
+          {/* Bottom Navigation for Mobile (< 768px) */}
           <BottomNav />
         </div>
       </QueryClientProvider>

@@ -257,9 +257,6 @@ export function DmReplyFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               DM Reply Flow
             </h1>
-            <p className="text-xs text-[#70706B] font-normal">
-              Auto-reply when users send specific keywords in DMs
-            </p>
           </div>
         </div>
 
@@ -280,9 +277,8 @@ export function DmReplyFlow({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#111110]">Enable Reply to All</div>
-            <p className="text-xs text-[#70706B] mt-0.5">
-              Respond to ALL DMs without keyword matching
+            <p className="text-xs text-[#70706B]">
+              Respond to all incoming DMs without keyword matching
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -305,9 +301,6 @@ export function DmReplyFlow({
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs font-bold text-[#111110]">
-            What keywords should they DM?
-          </label>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -373,9 +366,6 @@ export function DmReplyFlow({
             })}
           </div>
 
-          <p className="text-[11px] text-[#70706B]">
-            Users who DM any of these keywords will trigger the automation
-          </p>
         </div>
       </div>
 
@@ -391,9 +381,8 @@ export function DmReplyFlow({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#111110]">Ask user to follow first</div>
-            <p className="text-xs text-[#70706B] mt-0.5">
-              Politely ask the user to follow you before receiving the DM
+            <p className="text-xs text-[#70706B]">
+              Ask the user to follow your account before receiving the DM
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -415,10 +404,6 @@ export function DmReplyFlow({
           <h2 className="text-sm font-bold text-[#111110]">Trigger Response DM</h2>
         </div>
 
-        <label className="block text-xs font-bold text-[#111110]">
-          Message sent when user DMs the keyword
-        </label>
-
         <div className="relative">
           <textarea
             rows={4}
@@ -431,8 +416,7 @@ export function DmReplyFlow({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-[#70706B] pt-0.5">
-          <span>This is the first message users receive when they DM your keyword</span>
+        <div className="flex items-center justify-end text-[11px] text-[#70706B] pt-0.5">
           <span>{dmResponseText.length}/1000 characters</span>
         </div>
       </div>

@@ -214,9 +214,6 @@ export function StoryReplyFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               Story Reply Flow
             </h1>
-            <p className="text-xs text-[#70706B] font-normal">
-              Auto-reply in DM when someone replies to your story
-            </p>
           </div>
         </div>
 
@@ -237,9 +234,8 @@ export function StoryReplyFlow({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#111110]">Enable Reply to All</div>
-            <p className="text-xs text-[#70706B] mt-0.5">
-              Respond to ALL story replies without keyword matching
+            <p className="text-xs text-[#70706B]">
+              Respond to all story replies without keyword matching
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -262,9 +258,6 @@ export function StoryReplyFlow({
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs font-bold text-[#111110]">
-            What keywords should their story reply contain?
-          </label>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -330,9 +323,6 @@ export function StoryReplyFlow({
             })}
           </div>
 
-          <p className="text-[11px] text-[#70706B]">
-            Users who reply with any of these keywords will trigger the automation
-          </p>
         </div>
       </div>
 
@@ -355,8 +345,7 @@ export function StoryReplyFlow({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-[#70706B] pt-0.5">
-          <span>This is the first message users receive when they DM your keyword</span>
+        <div className="flex items-center justify-end text-[11px] text-[#70706B] pt-0.5">
           <span>{dmResponseText.length}/1000 characters</span>
         </div>
       </div>

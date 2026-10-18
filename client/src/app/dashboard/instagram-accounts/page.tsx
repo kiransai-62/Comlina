@@ -116,9 +116,6 @@ export default function InstagramAccountsPage() {
       <div className="flex items-start justify-between flex-wrap gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[#111110] tracking-tight">Instagram Accounts</h1>
-          <p className="text-sm text-[#70706B] mt-1">
-            Connect and manage your Instagram accounts via official Meta Graph API.
-          </p>
         </div>
 
         <div className="flex items-center gap-3">
@@ -221,8 +218,8 @@ export default function InstagramAccountsPage() {
             return (
               <div key={acc.id} className="bg-white border border-[#ECECE8] rounded-2xl p-6 shadow-sm">
                 <div className="flex items-center justify-between flex-wrap gap-4">
-                  <div className="flex items-center gap-4">
-                    <div className="relative">
+                  <div className="flex items-center gap-3.5 sm:gap-4 min-w-0 max-w-full">
+                    <div className="relative shrink-0">
                       {acc.profile_pic_url ? (
                         <img
                           src={acc.profile_pic_url}
@@ -239,9 +236,9 @@ export default function InstagramAccountsPage() {
                       </div>
                     </div>
 
-                    <div>
-                      <div className="flex items-center gap-2.5">
-                        <span className="font-bold text-base text-[#111110]">{handle}</span>
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2.5 flex-wrap">
+                        <span className="font-bold text-base text-[#111110] truncate max-w-[180px] sm:max-w-none">{handle}</span>
                         {isActive ? (
                           isExpiringSoon ? (
                             <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 bg-[#FEF3C7] text-[#92400E] border border-[#FDE68A] rounded-full text-xs font-semibold">
@@ -283,7 +280,7 @@ export default function InstagramAccountsPage() {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2.5 flex-wrap">
+                  <div className="flex items-center gap-2.5 flex-wrap w-full sm:w-auto">
                     <button
                       type="button"
                       disabled={syncingId === acc.id}

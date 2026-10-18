@@ -145,9 +145,6 @@ export function CommentReplyFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               Comment Reply Flow
             </h1>
-            <p className="text-xs text-[#70706B]">
-              Reply publicly to comments with specific keywords
-            </p>
           </div>
         </div>
 
@@ -175,9 +172,6 @@ export function CommentReplyFlow({
             <span>{showAllPosts ? 'Collapse view' : 'Browse all'}</span>
           </button>
         </div>
-        <p className="text-xs text-[#70706B] -mt-2">
-          Choose a specific post or apply to all posts
-        </p>
 
         {/* Post Selection Horizontal Scroller / Grid */}
         <div className="flex items-center gap-3 overflow-x-auto pb-2 pt-1 scrollbar-thin">
@@ -241,8 +235,7 @@ export function CommentReplyFlow({
           </div>
           <div>
             <h2 className="text-sm font-bold text-[#111110]">Reply to All</h2>
-            <div className="text-xs font-semibold text-[#111110] mt-0.5">Enable Reply to All</div>
-            <p className="text-xs text-[#70706B]">Respond to ALL comments without keyword matching</p>
+            <p className="text-xs text-[#70706B]">Respond to all comments without keyword matching</p>
           </div>
         </div>
 
@@ -266,9 +259,6 @@ export function CommentReplyFlow({
             <h2 className="text-sm font-bold text-[#111110]">Trigger Keywords</h2>
           </div>
           <div>
-            <label className="block text-xs font-semibold text-[#111110] mb-1.5">
-              What keywords should they comment?
-            </label>
             <div className="flex items-center gap-2">
               <input
                 type="text"
@@ -306,10 +296,6 @@ export function CommentReplyFlow({
               </span>
             ))}
           </div>
-
-          <p className="text-[11px] text-[#70706B]">
-            Users who comment any of these keywords will trigger the automation
-          </p>
         </div>
       )}
 
@@ -332,8 +318,7 @@ export function CommentReplyFlow({
         </div>
 
         <div>
-          <div className="text-xs font-semibold text-[#111110]">Enable AI Reply</div>
-          <p className="text-xs text-[#70706B]">AI reads the comment and replies contextually</p>
+          <p className="text-xs text-[#70706B]">Generate contextual replies using AI</p>
         </div>
 
         {aiReplyEnabled && (
@@ -348,9 +333,6 @@ export function CommentReplyFlow({
               placeholder="e.g. Reply enthusiastically and mention checking the link in bio."
               className="w-full px-3.5 py-2.5 bg-white border border-[#ECECE8] rounded-xl text-xs text-[#111110] outline-none focus:border-[#0066FF]"
             />
-            <p className="text-[11px] text-[#70706B]">
-              Each comment will be analyzed by smart AI to craft a personalized public response.
-            </p>
           </div>
         )}
       </div>
@@ -368,9 +350,6 @@ export function CommentReplyFlow({
         </div>
 
         <div>
-          <label className="block text-xs font-semibold text-[#111110] mb-1.5">
-            Your public reply to comments
-          </label>
           <textarea
             rows={4}
             value={replyText}

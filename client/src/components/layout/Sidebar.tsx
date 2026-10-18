@@ -31,6 +31,7 @@ export function Sidebar() {
 
   React.useEffect(() => {
     fetchUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const navItems = [
@@ -69,11 +70,7 @@ export function Sidebar() {
         )}
       </div>
 
-      <div className="px-6 pb-2">
-        <p className="text-[11.5px] text-[#70706B] leading-snug">
-          Instagram conversations that grow your business.
-        </p>
-      </div>
+
 
       {/* Navigation Links */}
       <nav className="flex-1 px-3 py-2 space-y-1 overflow-y-auto">

@@ -7,6 +7,9 @@ export interface AuthUser {
   id: string;
   email: string;
   fullName?: string;
+  phone?: string;
+  avatarUrl?: string;
+  timezone?: string;
 }
 
 export interface BackendAuthResponse {
@@ -168,12 +171,112 @@ class AuthService {
           id: user.id,
           email: user.email || '',
           fullName: user.user_metadata?.full_name || user.user_metadata?.name || user.email?.split('@')[0] || '',
+          phone: user.phone || user.user_metadata?.phone || '',
+          avatarUrl: user.user_metadata?.avatar_url || '',
+          timezone: user.user_metadata?.timezone || '',
         };
       }
     }
 
     // Backend user
-    return this._backendUser;
+    if (this._backendUser) {
+      return this._backendUser;
+    }
+
+    const token = await this.getToken();
+    if (token) {
+      const synced = await this.syncWithBackend();
+      if (synced?.user) {
+        return synced.user;
+      }
+    }
+
+    return null;
+  }
+
+  async updateProfile(updates: {
+    fullName?: string;
+    phone?: string;
+    avatarUrl?: string;
+    timezone?: string;
+  }): Promise<{ success: boolean; user?: AuthUser; error?: string }> {
+    let updatedUser: AuthUser | null = null;
+    let updateError: string | null = null;
+
+    // 1. Supabase update if configured
+    if (isSupabaseConfigured) {
+      try {
+        const { data, error } = await supabase.auth.updateUser({
+          data: {
+            full_name: updates.fullName,
+            phone: updates.phone,
+            avatar_url: updates.avatarUrl,
+            timezone: updates.timezone,
+          },
+        });
+        if (error) {
+          updateError = error.message;
+        } else if (data.user) {
+          const u = data.user;
+          updatedUser = {
+            id: u.id,
+            email: u.email || '',
+            fullName: u.user_metadata?.full_name || u.user_metadata?.name || '',
+            phone: u.phone || u.user_metadata?.phone || '',
+            avatarUrl: u.user_metadata?.avatar_url || '',
+            timezone: u.user_metadata?.timezone || '',
+          };
+        }
+      } catch (err: any) {
+        updateError = err.message || 'Supabase profile update failed';
+      }
+    }
+
+    // 2. Backend update if token available
+    try {
+      const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:8000/api';
+      const token = await this.getToken();
+      if (token) {
+        const resp = await fetch(`${API_BASE}/auth/profile`, {
+          method: 'PATCH',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${token}`,
+          },
+          body: JSON.stringify({
+            full_name: updates.fullName,
+            timezone: updates.timezone,
+            avatar_url: updates.avatarUrl,
+            phone: updates.phone,
+          }),
+        });
+
+        if (resp.ok) {
+          const d = await resp.json();
+          this._backendUser = {
+            id: d.id,
+            email: d.email,
+            fullName: d.full_name,
+            phone: d.phone || updates.phone || this._backendUser?.phone,
+            avatarUrl: d.avatar_url,
+            timezone: d.timezone,
+          };
+          if (typeof window !== 'undefined') {
+            localStorage.setItem('comlina_user', JSON.stringify(this._backendUser));
+          }
+          if (!updatedUser) {
+            updatedUser = this._backendUser;
+          }
+        }
+      }
+    } catch {
+      // Backend error fallback
+    }
+
+    if (updatedUser) {
+      return { success: true, user: updatedUser };
+    }
+    return { success: false, error: updateError || 'Failed to update profile' };
   }
 
   async isAuthenticated(): Promise<boolean> {

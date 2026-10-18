@@ -251,6 +251,10 @@ export function CommentToDmFlow({
   // Active Selected Post Object from Real Account Posts
   const selectedPost = posts.find((p) => p.id === selectedPostId) || (posts.length > 0 ? posts[0] : null);
 
+  // Accordion Expand/Collapse for Section 6 (Advanced Settings)
+  const [isAdvancedSectionExpanded, setIsAdvancedSectionExpanded] = useState(false);
+  const [isMobileBottomPreviewOpen, setIsMobileBottomPreviewOpen] = useState(false);
+
   // Mobile / Tablet Tab Switcher
   const [mobileStudioTab, setMobileStudioTab] = useState<'editor' | 'preview'>('editor');
 
@@ -306,7 +310,7 @@ export function CommentToDmFlow({
       return;
     }
 
-    if (!isFormValid) {
+    if (status === 'ACTIVE' && !isFormValid) {
       showToast('Please fill in required fields (including valid HTTPS URL) before publishing.');
       return;
     }
@@ -555,7 +559,7 @@ export function CommentToDmFlow({
                 <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                   1
                 </span>
-                <h2 className="text-sm sm:text-base font-bold text-[#111110]">1. Select Post</h2>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">Select Post</h2>
               </div>
 
               <button
@@ -569,21 +573,8 @@ export function CommentToDmFlow({
               </button>
             </div>
 
-            <p className="text-xs text-[#70706B]">
-              Choose which Instagram post will trigger your automation.
-            </p>
-
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-bold text-[#111110]">
-                Select a post
-              </label>
-              <p className="text-xs text-[#70706B]">
-                Choose a specific post or apply this automation to all eligible posts.
-              </p>
-            </div>
-
             {/* Pill Tabs: Specific Post | All Posts */}
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 pt-1">
               <button
                 type="button"
                 onClick={() => setPostMode('specific')}
@@ -763,8 +754,8 @@ export function CommentToDmFlow({
                 <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                   2
                 </span>
-                <h2 className="text-sm sm:text-base font-bold text-[#111110]">2. Ask to Follow</h2>
-                <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2.5 py-0.5 rounded-full uppercase tracking-wider border border-[#FDE68A]/60">
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">Ask to Follow</h2>
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-[#FEF3C7] text-[#B45309] px-2 py-0.5 rounded-full uppercase tracking-wider border border-[#FDE68A]/60">
                   <Sparkles size={11} className="text-[#D97706]" />
                   Premium
                 </span>
@@ -787,23 +778,11 @@ export function CommentToDmFlow({
               </button>
             </div>
 
-            <p className="text-xs text-[#70706B]">
-              Prompt users to follow your Instagram account before receiving the resource or continuing the intended flow.
-            </p>
-
-            <div className="p-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs text-[#70706B]">
-              <span className="font-semibold text-[#111110]">Helper text: </span>
-              &ldquo;Encourage users to follow your account before continuing.&rdquo;
-            </div>
-
             {askFollowEnabled && (
               <div className="p-4 pt-3 border border-[#D1EADC] bg-[#F4FBF6] rounded-xl space-y-2 transition-all">
                 <label className="block text-xs font-semibold text-[#064125]">
                   Follow Request Message
                 </label>
-                <p className="text-[11px] text-[#2E7D32]">
-                  Encourage users to follow your account before continuing.
-                </p>
                 <input
                   type="text"
                   value={askFollowMessage}
@@ -824,7 +803,7 @@ export function CommentToDmFlow({
                 <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                   3
                 </span>
-                <h2 className="text-sm sm:text-base font-bold text-[#111110]">3. Trigger Keywords</h2>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">Trigger Keywords</h2>
               </div>
 
               <span className="text-xs font-medium text-[#70706B]">
@@ -832,18 +811,7 @@ export function CommentToDmFlow({
               </span>
             </div>
 
-            <p className="text-xs text-[#70706B]">
-              Choose the words that start your automated DM.
-            </p>
-
-            <div className="space-y-1.5 pt-1">
-              <label className="block text-xs font-bold text-[#111110]">
-                Add keywords
-              </label>
-              <p className="text-xs text-[#70706B]">
-                Enter a keyword, then press Enter or tap Add.
-              </p>
-
+            <div className="space-y-2 pt-1">
               {/* Input Bar */}
               <div className="flex items-center border border-[#ECECE8] bg-[#FBFBFA] rounded-xl px-3 py-1.5 focus-within:border-[#15803D] focus-within:bg-white transition-all shadow-2xs">
                 <input
@@ -851,7 +819,7 @@ export function CommentToDmFlow({
                   value={keywordInput}
                   onChange={(e) => setKeywordInput(e.target.value)}
                   onKeyDown={handleKeywordKeyDown}
-                  placeholder="e.g. PRICE, LINK, INFO"
+                  placeholder="Add keyword (e.g. PRICE, LINK, INFO) and press Enter"
                   className="flex-1 bg-transparent text-xs text-[#111110] placeholder:text-[#9E9E96] outline-none py-1"
                 />
                 <button
@@ -925,23 +893,10 @@ export function CommentToDmFlow({
               <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                 4
               </span>
-              <h2 className="text-sm sm:text-base font-bold text-[#111110]">4. Automated DM Message</h2>
+              <h2 className="text-sm sm:text-base font-bold text-[#111110]">Automated DM Message</h2>
             </div>
 
-            <p className="text-xs text-[#70706B]">
-              Write the private message sent when a comment matches your trigger.
-            </p>
-
             <div className="space-y-1.5 pt-1">
-              <div className="flex items-center justify-between flex-wrap gap-1">
-                <label className="block text-xs font-bold text-[#111110]">
-                  Your message
-                </label>
-                <span className="text-[11px] text-[#70706B]">
-                  Example: Hey! 👋 Here&apos;s the resource you 
-                </span>
-              </div>
-
               {/* Message Box */}
               <div className="border border-[#ECECE8] rounded-2xl p-3.5 bg-white focus-within:border-[#15803D] transition-all shadow-2xs">
                 <textarea
@@ -987,37 +942,24 @@ export function CommentToDmFlow({
                   </div>
                 </div>
               </div>
-
-              <p className="text-xs text-[#70706B]">
-                Helper text: Keep your message clear and relevant to the comment.
-              </p>
             </div>
           </section>
 
           {/* ══════════════════════════════════════════════════════════════
-              5. DM BUTTONS
+              5. ACTION BUTTON (CTA)
           ══════════════════════════════════════════════════════════════ */}
           <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
             <div className="flex items-center gap-2.5">
               <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                 5
               </span>
-              <h2 className="text-sm sm:text-base font-bold text-[#111110]">5. DM Buttons</h2>
-            </div>
-
-            <p className="text-xs text-[#70706B]">
-              Add clickable buttons to help people take the next step.
-            </p>
-
-            <div className="p-3 bg-[#FBFBFA] border border-[#ECECE8] rounded-xl text-xs text-[#70706B]">
-              <span className="font-semibold text-[#111110]">Helper text: </span>
-              Use a valid destination URL and a short, action-focused label.
+              <h2 className="text-sm sm:text-base font-bold text-[#111110]">Action Button (CTA)</h2>
             </div>
 
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-1">
               <div>
                 <label className="block text-xs font-bold text-[#111110] mb-1">
-                  Button label <span className="text-red-500">*</span>
+                  Button Label <span className="text-red-500">*</span>
                 </label>
                 <input
                   type="text"
@@ -1044,37 +986,53 @@ export function CommentToDmFlow({
           </section>
 
           {/* ══════════════════════════════════════════════════════════════
-              6. ADVANCED SETTINGS
+              6. ADVANCED SETTINGS (ACCORDION COLLAPSED BY DEFAULT)
           ══════════════════════════════════════════════════════════════ */}
-          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-5">
-            <div className="flex items-center justify-between gap-3">
+          <section className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-4">
+            <div 
+              className="flex items-center justify-between gap-3 cursor-pointer select-none"
+              onClick={() => setIsAdvancedSectionExpanded((prev) => !prev)}
+            >
               <div className="flex items-center gap-2.5">
                 <span className="w-6 h-6 rounded-full bg-[#EAF6EE] text-[#15803D] font-bold text-xs flex items-center justify-center shrink-0">
                   6
                 </span>
-                <h2 className="text-sm sm:text-base font-bold text-[#111110]">6. Advanced Settings</h2>
+                <h2 className="text-sm sm:text-base font-bold text-[#111110]">Advanced Settings</h2>
               </div>
 
-              <button
-                type="button"
-                onClick={toggleAllCards}
-                className="text-xs font-semibold text-[#2563EB] hover:underline cursor-pointer"
-              >
-                {allExpanded ? 'Collapse all' : 'Expand all'}
-              </button>
+              <div className="flex items-center gap-2">
+                <span className="text-xs font-semibold text-[#70706B] hidden sm:inline">
+                  {isAdvancedSectionExpanded ? 'Hide' : 'Show'}
+                </span>
+                <button
+                  type="button"
+                  className="p-1.5 rounded-lg text-[#70706B] hover:text-[#111110] hover:bg-[#F4F4F0] cursor-pointer"
+                  aria-label={isAdvancedSectionExpanded ? 'Collapse advanced settings' : 'Expand advanced settings'}
+                >
+                  {isAdvancedSectionExpanded ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+                </button>
+              </div>
             </div>
 
-            <p className="text-xs text-[#70706B]">
-              Customize optional behavior for your automation.
-            </p>
+            {isAdvancedSectionExpanded && (
+              <div className="space-y-5 pt-3 border-t border-[#ECECE8]/60 animate-in fade-in duration-200">
+                <div className="flex items-center justify-end">
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      toggleAllCards();
+                    }}
+                    className="text-xs font-semibold text-[#2563EB] hover:underline cursor-pointer"
+                  >
+                    {allExpanded ? 'Collapse sub-options' : 'Expand sub-options'}
+                  </button>
+                </div>
 
-            {/* ── SUB-SECTION: MATCH BEHAVIOR ── */}
+                {/* ── SUB-SECTION: MATCH BEHAVIOR ── */}
             <div className="p-4 bg-[#FBFBFA] border border-[#ECECE8] rounded-2xl space-y-3">
               <div>
-                <h3 className="text-xs font-bold text-[#111110]">Match behavior</h3>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  Choose whether keywords must match exactly or can appear within a comment.
-                </p>
+                <h3 className="text-xs font-bold text-[#111110]">Match Behavior</h3>
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2.5">
@@ -1119,10 +1077,7 @@ export function CommentToDmFlow({
             {/* ── SUB-SECTION: ADDITIONAL OPTIONS ── */}
             <div className="space-y-3 pt-1">
               <div>
-                <h3 className="text-xs font-bold text-[#111110]">Additional options</h3>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  Configure eligible follow-up behavior and other supported features.
-                </p>
+                <h3 className="text-xs font-bold text-[#111110]">Additional Options</h3>
               </div>
 
               {/* CARD C: COMMENT TEASER REPLY (PREMIUM) */}
@@ -1299,7 +1254,52 @@ export function CommentToDmFlow({
                 </div>
               </div>
             </div>
-          </section>
+          </div>
+        )}
+      </section>
+
+          {/* Inline Collapsible Simulator for Mobile / Tablet */}
+          <div className="xl:hidden bg-white border border-[#ECECE8] rounded-2xl p-4 shadow-xs space-y-3">
+            <button
+              type="button"
+              onClick={() => setIsMobileBottomPreviewOpen((p) => !p)}
+              className="w-full flex items-center justify-between text-xs font-bold text-[#111110] cursor-pointer"
+            >
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-[#15803D] animate-pulse" />
+                <span>Live Simulator Preview</span>
+              </div>
+              <div className="flex items-center gap-1 text-[#70706B] font-semibold">
+                <span>{isMobileBottomPreviewOpen ? 'Hide' : 'Open Preview'}</span>
+                {isMobileBottomPreviewOpen ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+              </div>
+            </button>
+
+            {isMobileBottomPreviewOpen && (
+              <div className="pt-3 border-t border-[#ECECE8] animate-in fade-in duration-200">
+                <InstagramPhonePreview
+                  accountName={activeAccountName}
+                  avatarUrl={activeAvatarUrl}
+                  selectedPost={postMode === 'specific' ? selectedPost : null}
+                  keywords={keywords}
+                  deliveryText={responseDm}
+                  deliveryLinkButtonText={buttonLabel}
+                  deliveryLinkUrl={destinationUrl}
+                  askFollowEnabled={askFollowEnabled}
+                  askFollowText={askFollowMessage || `Follow @${activeAccountName} to get more such resources and updates!`}
+                  publicReplyEnabled={teaserEnabled}
+                  publicReplyText={teaserMessage}
+                  followupEnabled={followUpEnabled}
+                  followupHours={followUpHours}
+                  followupText={followUpMessage}
+                  defaultTab="dm"
+                  showStepHeader={false}
+                  isConnectedAccount={!!selectedAccount}
+                  accountStatus={selectedAccount?.status}
+                />
+              </div>
+            )}
+          </div>
         </div>
 
         {/* RIGHT COLUMN: 7. LIVE INSTAGRAM SIMULATOR (STICKY >= 1200px) */}

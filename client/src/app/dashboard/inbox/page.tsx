@@ -115,9 +115,6 @@ export default function ConversationsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-extrabold text-[#111110] tracking-tight">Conversations</h1>
-          <p className="text-xs text-[#70706B] mt-1">
-            View and manage all Instagram conversations in one place.
-          </p>
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -481,7 +478,7 @@ export default function ConversationsPage() {
         {/* ========================================================= */}
         {/* COLUMN 3: Contact Inspector Panel (3.5 cols) */}
         {/* ========================================================= */}
-        <div className="hidden md:flex col-span-12 lg:col-span-12 xl:col-span-3.5 bg-white border border-[#ECECE8] rounded-2xl flex-col h-[780px] shadow-2xs p-5 overflow-y-auto space-y-5">
+        <div className="hidden xl:flex xl:col-span-3.5 bg-white border border-[#ECECE8] rounded-2xl flex-col h-[780px] shadow-2xs p-5 overflow-y-auto space-y-5">
           {selectedConv ? (
             <>
               {/* Header */}

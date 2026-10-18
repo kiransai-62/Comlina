@@ -69,8 +69,9 @@ app.include_router(analytics_router, prefix=settings.API_V1_STR)
 app.include_router(instagram_router, prefix=settings.API_V1_STR)
 app.include_router(payments_router, prefix=settings.API_V1_STR)
 
-@app.get("/health", tags=["Health"])
-@app.get(f"{settings.API_V1_STR}/health", tags=["Health"])
+@app.api_route("/health", methods=["GET", "HEAD"], tags=["Health"])
+@app.api_route(f"{settings.API_V1_STR}/health", methods=["GET", "HEAD"], tags=["Health"])
+@app.api_route("/api/v1/health", methods=["GET", "HEAD"], tags=["Health"])
 async def health_check():
     return {
         "status": "healthy",
@@ -78,3 +79,4 @@ async def health_check():
         "version": settings.VERSION,
         "meta_api_version": settings.META_GRAPH_API_VERSION
     }
+

@@ -146,7 +146,7 @@ export function TopHeader() {
           </button>
 
           {isNotificationsOpen && (
-            <div className="absolute right-0 mt-2 w-72 bg-white rounded-2xl border border-[#ECECE8] shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="absolute right-0 mt-2 w-72 max-w-[calc(100vw-2rem)] bg-white rounded-2xl border border-[#ECECE8] shadow-xl p-3 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
               <div className="flex items-center justify-between mb-2 px-1">
                 <span className="font-bold text-sm text-[#111110]">Notifications</span>
               </div>
@@ -173,7 +173,7 @@ export function TopHeader() {
           </div>
 
           {isUserMenuOpen && (
-            <div className="absolute right-0 mt-2 w-52 bg-white rounded-2xl border border-[#ECECE8] shadow-xl py-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
+            <div className="absolute right-0 mt-2 w-52 max-w-[calc(100vw-2rem)] bg-white rounded-2xl border border-[#ECECE8] shadow-xl py-1.5 z-50 animate-in fade-in slide-in-from-top-1 duration-150">
               <div className="px-3.5 py-2.5 border-b border-[#ECECE8]">
                 <div className="font-semibold text-xs text-[#111110]">{displayName}</div>
                 <div className="text-[11px] text-[#70706B] truncate mt-0.5">{displayEmail}</div>

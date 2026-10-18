@@ -375,3 +375,40 @@ async def get_current_profile(
         },
     }
 
+
+class ProfileUpdateRequest(BaseModel):
+    full_name: Optional[str] = None
+    avatar_url: Optional[str] = None
+    timezone: Optional[str] = None
+    phone: Optional[str] = None
+
+
+@router.patch("/profile")
+async def update_current_profile(
+    body: ProfileUpdateRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Dict[str, Any]:
+    """
+    Updates the authenticated user's profile details (full_name, timezone, avatar_url).
+    """
+    if body.full_name is not None:
+        user.full_name = body.full_name.strip()
+    if body.timezone is not None:
+        user.timezone = body.timezone.strip()
+    if body.avatar_url is not None:
+        user.avatar_url = body.avatar_url.strip()
+
+    await db.commit()
+    await db.refresh(user)
+
+    return {
+        "id": str(user.id),
+        "email": user.email,
+        "full_name": user.full_name,
+        "avatar_url": user.avatar_url,
+        "timezone": user.timezone if not (user.timezone or "").startswith("pbkdf2:") else None,
+        "phone": body.phone,
+    }
+
+

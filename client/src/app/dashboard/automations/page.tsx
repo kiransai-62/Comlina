@@ -117,9 +117,6 @@ export default function AutomationsPage() {
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-extrabold text-[#111110] tracking-tight">Automations</h1>
-          <p className="text-sm text-[#70706B] mt-1">
-            Create and manage your Instagram automations.
-          </p>
         </div>
         <Link
           href="/dashboard/automations/create"
@@ -183,8 +180,8 @@ export default function AutomationsPage() {
         </div>
 
         {/* Right Tools: Search & Sort */}
-        <div className="flex items-center gap-3">
-          <div className="relative w-64">
+        <div className="flex items-center gap-2.5 w-full sm:w-auto">
+          <div className="relative flex-1 sm:w-64">
             <Search size={14} className="absolute left-3.5 top-1/2 -translate-y-1/2 text-[#70706B]" />
             <input
               type="text"
@@ -195,7 +192,7 @@ export default function AutomationsPage() {
             />
           </div>
 
-          <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-[#ECECE8] bg-white text-xs font-medium text-[#111110] shadow-2xs cursor-pointer hover:bg-[#FBFBFA]">
+          <div className="flex items-center gap-1 px-3 py-1.5 rounded-xl border border-[#ECECE8] bg-white text-xs font-medium text-[#111110] shadow-2xs cursor-pointer hover:bg-[#FBFBFA] shrink-0">
             <span>Last updated</span>
             <ChevronDown size={13} className="text-[#70706B] ml-1" />
           </div>
@@ -304,7 +301,7 @@ export default function AutomationsPage() {
                     </div>
 
                     {/* Tag Badges */}
-                    <div className="flex items-center gap-1.5 mt-2.5">
+                    <div className="flex items-center gap-1.5 mt-2.5 flex-wrap">
                       {tags.map((tag, idx) => (
                         <span 
                           key={idx}
@@ -313,6 +310,15 @@ export default function AutomationsPage() {
                           {tag}
                         </span>
                       ))}
+                    </div>
+
+                    {/* Compact Mobile Stats */}
+                    <div className="md:hidden flex items-center gap-2 mt-2 text-[11px] text-[#70706B] font-medium flex-wrap">
+                      <span>{commentsCount} comments</span>
+                      <span>·</span>
+                      <span>{dmsCount} DMs</span>
+                      <span>·</span>
+                      <span>{clicksPct} clicks</span>
                     </div>
                   </div>
                 </div>

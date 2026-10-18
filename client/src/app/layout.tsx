@@ -23,6 +23,9 @@ export const metadata: Metadata = {
       { url: '/comlina-mark.png' },
     ],
   },
+  other: {
+    'google-adsense-account': 'ca-pub-2835160283629906',
+  },
 };
 
 // viewport-fit=cover lets content reach the edges under notches/home
@@ -42,6 +45,13 @@ export default function RootLayout({
 }) {
   return (
     <html lang="en">
+      <head>
+        <script
+          async
+          src="https://pagead2.googlesyndication.com/pagead/js/adsbygoogle.js?client=ca-pub-2835160283629906"
+          crossOrigin="anonymous"
+        />
+      </head>
       <body className="bg-[#FAFAF8] min-h-screen text-[#333330] antialiased">
         {children}
         <PwaInstallPrompt />

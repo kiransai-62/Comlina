@@ -39,17 +39,9 @@ export function ResourceSection({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 6</span>
-          <span>•</span>
-          <span>Resource / Link</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
-          What should they receive?
+        <h2 className="text-xl font-black text-[#111110]">
+          Deliverable Resource &amp; Link
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Configure the final deliverable message and destination link.
-        </p>
       </div>
 
       <div className="space-y-4">

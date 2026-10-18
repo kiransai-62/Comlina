@@ -164,7 +164,7 @@ export default function PricingPage() {
       <footer className="border-t border-[#ECECE8] bg-white py-8 mt-16 text-xs text-[#71717A]">
         <div className="max-w-6xl mx-auto px-4 sm:px-6 flex flex-col sm:flex-row items-center justify-between gap-4">
           <p>© {new Date().getFullYear()} Comlina. All rights reserved.</p>
-          <div className="flex items-center gap-6">
+          <div className="flex items-center gap-x-6 gap-y-2 flex-wrap justify-center sm:justify-start">
             <Link href="/privacy" className="hover:text-[#111110] transition-colors">
               Privacy Policy
             </Link>

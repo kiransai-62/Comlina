@@ -247,9 +247,6 @@ export function CommentToLeadFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               Create Lead Flow
             </h1>
-            <p className="text-xs text-[#70706B] font-normal">
-              Comment → DM Welcome → Questions → Collect Info
-            </p>
           </div>
         </div>
 
@@ -301,9 +298,6 @@ export function CommentToLeadFlow({
             <span className="text-[#0066FF]"><ImageIcon size={17} /></span>
             <h2 className="text-sm font-bold text-[#111110]">Select Post (Optional)</h2>
           </div>
-          <p className="text-xs text-[#70706B] mt-0.5">
-            Apply to a specific post or all posts
-          </p>
         </div>
 
         {/* 2-Row Grid with Up/Down Scroll Controls on the right */}
@@ -393,8 +387,7 @@ export function CommentToLeadFlow({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#111110]">Reply to All Comments</div>
-            <p className="text-xs text-[#70706B] mt-0.5">Trigger for every comment, no keyword needed</p>
+            <p className="text-xs text-[#70706B]">Trigger for every comment without keyword matching</p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer shrink-0">
             <input
@@ -419,9 +412,6 @@ export function CommentToLeadFlow({
               placeholder="e.g., GUIDE, INFO, FREE"
               className="w-full px-4 py-3 bg-white border border-[#ECECE8] rounded-xl text-xs font-normal text-[#111110] outline-none focus:border-[#0066FF] placeholder:text-[#9E9E96]"
             />
-            <p className="text-[11px] text-[#70706B]">
-              Commenter must include this word to trigger the flow
-            </p>
           </div>
         )}
       </div>
@@ -444,9 +434,6 @@ export function CommentToLeadFlow({
             <Edit3 size={15} />
           </div>
         </div>
-        <p className="text-[11px] text-[#70706B]">
-          This message is sent immediately when someone triggers the flow. The first question follows automatically.
-        </p>
       </div>
 
       {/* 7. QUESTIONS CARD */}

@@ -95,9 +95,6 @@ export default function ContactsPage() {
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>
           <h1 className="text-[28px] font-extrabold text-[#111110] tracking-tight">Contacts</h1>
-          <p className="text-xs text-[#70706B] mt-1">
-            All the people who have engaged with your Instagram content.
-          </p>
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -265,7 +262,91 @@ export default function ContactsPage() {
       <div className="grid grid-cols-12 gap-5 items-start">
         {/* Contacts Table Column */}
         <div className={`${selectedContact ? 'col-span-12 lg:col-span-8' : 'col-span-12'} bg-white border border-[#ECECE8] rounded-2xl shadow-2xs overflow-hidden transition-all`}>
-          <div className="overflow-x-auto">
+          {/* Mobile Cards (< 768px) */}
+          <div className="md:hidden divide-y divide-[#ECECE8]/60">
+            {/* Mobile Loading Skeleton */}
+            {loadingContacts && (
+              [1, 2, 3].map((n) => (
+                <div key={n} className="p-4 space-y-2.5 animate-pulse">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-full bg-gray-200" />
+                    <div className="space-y-1.5 flex-1">
+                      <div className="h-3.5 w-28 bg-gray-200 rounded" />
+                      <div className="h-2.5 w-20 bg-gray-100 rounded" />
+                    </div>
+                  </div>
+                </div>
+              ))
+            )}
+
+            {/* Mobile Empty State */}
+            {!loadingContacts && !errorContacts && filteredContacts.length === 0 && (
+              <div className="py-12 text-center p-4">
+                <div className="w-10 h-10 rounded-full bg-[#FAFAF8] border border-[#ECECE8] flex items-center justify-center mx-auto text-[#70706B] mb-2">
+                  <Users size={18} />
+                </div>
+                <div className="text-xs font-bold text-[#111110]">No contacts found</div>
+                <p className="text-[11px] text-[#70706B] max-w-xs mx-auto mt-1">
+                  {search ? 'No contacts matched your search query.' : 'Contacts captured through your Instagram automations will appear here.'}
+                </p>
+              </div>
+            )}
+
+            {/* Mobile Contact Cards */}
+            {!loadingContacts && !errorContacts && filteredContacts.map((c: any) => {
+              const isRowSelected = selectedContact?.id === c.id;
+              const isChecked = !!selectedRows[c.id];
+              const rawUsername = c.username || 'User';
+              const handle = rawUsername.startsWith('@') ? rawUsername : `@${rawUsername}`;
+              const isFollowing = c.follower_status === 'FOLLOWING';
+              const initial = rawUsername.replace('@', '').charAt(0).toUpperCase() || 'U';
+
+              return (
+                <div 
+                  key={c.id} 
+                  onClick={() => setSelectedContactId(c.id)}
+                  className={`p-4 transition-colors cursor-pointer space-y-2.5 ${
+                    isRowSelected ? 'bg-[#FBFBFA]' : 'hover:bg-[#FDFDFD]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div onClick={(e) => e.stopPropagation()} className="pt-0.5">
+                        <input
+                          type="checkbox"
+                          checked={isChecked}
+                          onChange={() => handleToggleRow(c.id)}
+                          className="rounded border-gray-300 text-[#064125] focus:ring-0 cursor-pointer"
+                        />
+                      </div>
+                      <div className="w-9 h-9 rounded-full border border-[#ECECE8] bg-[#EAF6EE] text-[#064125] flex items-center justify-center font-bold text-xs shrink-0">
+                        {initial}
+                      </div>
+                      <div className="min-w-0">
+                        <div className="font-bold text-xs text-[#111110] truncate">{handle}</div>
+                        <div className="text-[11px] text-[#70706B] truncate">{c.full_name || 'Instagram User'}</div>
+                      </div>
+                    </div>
+
+                    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-semibold shrink-0 ${
+                      isFollowing ? 'bg-[#EAF6EE] text-[#15803D]' : 'bg-gray-100 text-[#70706B]'
+                    }`}>
+                      <span className={`w-1.5 h-1.5 rounded-full ${isFollowing ? 'bg-[#15803D]' : 'bg-[#9E9E96]'}`} />
+                      {isFollowing ? 'Following' : 'Non-follower'}
+                    </span>
+                  </div>
+
+                  <div className="flex items-center justify-between text-[11px] text-[#70706B] pl-8">
+                    <span>{c.interaction_count ?? 1} interactions</span>
+                    <span>{c.last_interaction_at || 'Recent'}</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {/* Desktop & Tablet Table (>= 768px) */}
+          <div className="hidden md:block overflow-x-auto">
             <table className="w-full text-left border-collapse text-xs">
               <thead>
                 <tr className="border-b border-[#ECECE8] text-[#70706B] font-semibold bg-white">

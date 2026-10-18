@@ -177,9 +177,6 @@ export function DmToLeadFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               Create Lead Flow
             </h1>
-            <p className="text-xs text-[#70706B] font-normal">
-              DM keyword → Welcome → Questions → Collect Info
-            </p>
           </div>
         </div>
 
@@ -225,10 +222,7 @@ export function DmToLeadFlow({
       <div className="bg-white border border-[#ECECE8] rounded-2xl p-5 sm:p-6 shadow-xs space-y-2">
         <h2 className="text-sm font-bold text-[#111110]">DM Trigger Keyword</h2>
         
-        <div className="space-y-1.5 pt-1">
-          <label className="block text-xs font-bold text-[#111110]">
-            Trigger Keyword
-          </label>
+        <div className="pt-1">
           <input
             type="text"
             value={triggerKeyword}
@@ -236,9 +230,6 @@ export function DmToLeadFlow({
             placeholder="e.g., GUIDE, INFO, FREE"
             className="w-full px-4 py-3 bg-white border border-[#ECECE8] rounded-xl text-xs font-normal text-[#111110] outline-none focus:border-[#0066FF] placeholder:text-[#9E9E96]"
           />
-          <p className="text-[11px] text-[#70706B]">
-            When someone DMs you this exact keyword, the lead flow starts immediately.
-          </p>
         </div>
       </div>
 
@@ -260,9 +251,6 @@ export function DmToLeadFlow({
             <Edit3 size={15} />
           </div>
         </div>
-        <p className="text-[11px] text-[#70706B]">
-          This message is sent immediately when someone triggers the flow. The first question follows automatically.
-        </p>
       </div>
 
       {/* 6. QUESTIONS CARD */}

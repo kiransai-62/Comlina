@@ -1,0 +1,75 @@
+name: Comlina 10-Minute Health & Uptime Monitor
+
+on:
+  schedule:
+    # Runs every 10 minutes (UTC)
+    - cron: '*/10 * * * *'
+  workflow_dispatch:
+    inputs:
+      target_url:
+        description: 'Health check target URL'
+        required: false
+        default: 'https://comlina-api.onrender.com/health'
+      timeout_seconds:
+        description: 'HTTP timeout in seconds'
+        required: false
+        default: '15'
+
+concurrency:
+  group: health-check-monitor
+  cancel-in-progress: false
+
+jobs:
+  uptime-check:
+    name: Uptime & Latency Check
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Execute Health Check & Measure Latency
+        id: monitor
+        run: |
+          TARGET="${{ github.event.inputs.target_url || 'https://comlina-api.onrender.com/health' }}"
+          TIMEOUT="${{ github.event.inputs.timeout_seconds || '15' }}"
+          python scripts/uptime_monitor.py --url "$TARGET" --timeout "$TIMEOUT" --retries 3 --delay 3 --log-file health_log.jsonl --json > health_result.json
+          cat health_result.json
+
+      - name: Generate Health Summary
+        if: always()
+        run: |
+          if [ -f health_result.json ]; then
+            python -c "
+          import json
+          try:
+              data = json.load(open('health_result.json'))
+              status = '🟢 HEALTHY' if data.get('healthy') else '🔴 UNHEALTHY'
+              code = data.get('status_code', 'N/A')
+              latency = data.get('latency_ms', 'N/A')
+              attempts = data.get('attempts_used', 'N/A')
+              max_retries = data.get('max_retries', 'N/A')
+              timestamp = data.get('timestamp_utc', 'N/A')
+              url = data.get('target_url', 'N/A')
+              summary = f'''## Comlina API Uptime Report
+          - **Status**: {status}
+          - **Endpoint**: \`{url}\`
+          - **HTTP Code**: \`{code}\`
+          - **Latency**: \`{latency} ms\`
+          - **Attempts Used**: \`{attempts}/{max_retries}\`
+          - **Timestamp (UTC)**: \`{timestamp}\`
+          '''
+              with open('${{ runner.temp }}/summary.md', 'w') as f:
+                  f.write(summary)
+          except Exception as e:
+              with open('${{ runner.temp }}/summary.md', 'w') as f:
+                  f.write(f'Failed to parse health result: {e}')
+          "
+            cat "${{ runner.temp }}/summary.md" >> $GITHUB_STEP_SUMMARY
+          fi

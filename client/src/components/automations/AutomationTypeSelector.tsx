@@ -78,17 +78,9 @@ export function AutomationTypeSelector({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 1</span>
-          <span>•</span>
-          <span>What do you want?</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
+        <h2 className="text-xl font-black text-[#111110]">
           Choose an automation to get started
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Select an Instagram event or workflow outcome for this playbook.
-        </p>
       </div>
 
       <div className="space-y-6">

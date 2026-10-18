@@ -126,33 +126,16 @@ export function InstagramPhonePreview({
 
   return (
     <div className="flex flex-col items-center w-full max-w-sm mx-auto text-[#111110]">
-      {/* ── TOP HEADER: 7. Live Instagram Simulator & COMPLIANT TO DM ── */}
-      <div className="w-full pb-3.5 mb-3 border-b border-[#ECECE8]">
+      {/* ── TOP HEADER: Clean Live Preview ── */}
+      <div className="w-full pb-3 mb-3 border-b border-[#ECECE8]">
         <div className="flex items-center justify-between gap-2">
           <div className="flex items-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[#22C55E] animate-pulse" />
-            <h3 className="text-sm font-bold text-[#111110]">
-              {showStepHeader ? '7. Live Instagram Simulator' : 'Live Instagram Simulator'}
-            </h3>
+            <span className="w-2 h-2 rounded-full bg-[#22C55E]" />
+            <h3 className="text-xs font-bold text-[#111110]">Live Preview</h3>
           </div>
-          <span className="text-[10px] font-bold text-[#15803D] bg-[#DCFCE7] border border-[#BBF7D0] px-2.5 py-0.5 rounded-full uppercase tracking-wider">
-            COMPLIANT TO DM
+          <span className="text-[10px] font-mono text-[#064125] bg-[#EAF6EE] px-2 py-0.5 rounded font-bold">
+            @{displayAccountName}
           </span>
-        </div>
-        <p className="text-xs text-[#70706B] mt-1">
-          Preview how your automated DM will appear before publishing.
-        </p>
-
-        <div className="mt-2.5 p-2.5 rounded-xl bg-[#FBFBFA] border border-[#ECECE8]">
-          <div className="flex items-center justify-between">
-            <div className="text-xs font-bold text-[#111110]">Preview your conversation</div>
-            <span className="text-[10px] font-mono text-[#15803D] bg-[#EAF6EE] px-1.5 py-0.5 rounded font-bold">
-              @{displayAccountName}
-            </span>
-          </div>
-          <p className="text-[11px] text-[#70706B] mt-0.5">
-            Changes to your message and buttons should update the preview automatically.
-          </p>
         </div>
       </div>
 
@@ -231,14 +214,14 @@ export function InstagramPhonePreview({
       </div>
 
       {/* ── REALISTIC IPHONE SIMULATOR FRAME ── */}
-      <div className="w-full max-w-[340px] h-[640px] bg-[#111110] rounded-[44px] p-3 shadow-2xl border-4 border-[#262626] relative flex flex-col overflow-hidden">
+      <div className="w-full max-w-[340px] h-[580px] min-[400px]:h-[640px] bg-[#111110] rounded-[36px] min-[400px]:rounded-[44px] p-2.5 min-[400px]:p-3 shadow-2xl border-4 border-[#262626] relative flex flex-col overflow-hidden mx-auto">
         {/* Dynamic Island / Notch */}
         <div className="absolute top-4 left-1/2 -translate-x-1/2 w-24 h-5 bg-black rounded-full z-30 flex items-center justify-center">
           <div className="w-2.5 h-2.5 rounded-full bg-[#1A1A1A] ml-auto mr-2.5" />
         </div>
 
         {/* Screen Area */}
-        <div className="w-full h-full bg-white rounded-[34px] overflow-hidden flex flex-col relative pt-7">
+        <div className="w-full h-full bg-white rounded-[28px] min-[400px]:rounded-[34px] overflow-hidden flex flex-col relative pt-7">
           
           {/* TAB 1: POST PREVIEW */}
           {activeTab === 'post' && (

@@ -15,6 +15,7 @@ export interface WorkspaceState {
   selectedAccount: string;
   setWorkspaces: (workspaces: Workspace[]) => void;
   setCurrentWorkspace: (workspace: Workspace | null) => void;
+  updateCurrentWorkspaceName: (name: string) => void;
   setSelectedAccount: (account: string) => void;
   reset: () => void;
 }
@@ -27,6 +28,20 @@ export const useWorkspaceStore = create<WorkspaceState>((set) => ({
   setCurrentWorkspace: (workspace) => {
     api.setWorkspaceId(workspace?.id || null);
     set({ currentWorkspace: workspace });
+  },
+  updateCurrentWorkspaceName: (name: string) => {
+    set((state) => {
+      if (!state.currentWorkspace) return state;
+      const updated = { ...state.currentWorkspace, name };
+      if (typeof window !== 'undefined') {
+        try {
+          localStorage.setItem('comlina_workspace', JSON.stringify(updated));
+        } catch {
+          // ignore
+        }
+      }
+      return { currentWorkspace: updated };
+    });
   },
   setSelectedAccount: (account) => set({ selectedAccount: account }),
   reset: () => {

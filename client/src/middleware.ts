@@ -91,11 +91,12 @@ const INJECTION_PATTERNS = [
 // ============================================================================
 const CSP_POLICY = [
   "default-src 'self'",
-  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.supabase.co https://*.facebook.com https://*.instagram.com https://accounts.google.com",
+  "script-src 'self' 'unsafe-inline' 'unsafe-eval' https://*.supabase.co https://*.facebook.com https://*.instagram.com https://accounts.google.com https://pagead2.googlesyndication.com https://*.googlesyndication.com https://adservice.google.com",
   "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com",
-  "img-src 'self' data: blob: https://images.unsplash.com https://*.facebook.com https://*.instagram.com https://*.cdninstagram.com https://*.fbcdn.net https://api.dicebear.com https://*.googleusercontent.com",
+  "img-src 'self' data: blob: https://images.unsplash.com https://*.facebook.com https://*.instagram.com https://*.cdninstagram.com https://*.fbcdn.net https://api.dicebear.com https://*.googleusercontent.com https://pagead2.googlesyndication.com",
   "font-src 'self' https://fonts.gstatic.com data:",
-  "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai https://*.onrender.com wss://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com",
+  "connect-src 'self' https://api.comlina.ai wss://api.comlina.ai https://*.onrender.com wss://*.onrender.com http://localhost:8000 http://127.0.0.1:8000 https://*.supabase.co wss://*.supabase.co https://*.instagram.com https://graph.facebook.com https://accounts.google.com https://*.googleapis.com https://pagead2.googlesyndication.com https://*.googlesyndication.com",
+  "frame-src 'self' https://googleads.g.doubleclick.net https://pagead2.googlesyndication.com",
   "frame-ancestors 'none'",
   "object-src 'none'",
   "base-uri 'self'",
@@ -275,6 +276,6 @@ export const config = {
      * - _next/image (image optimization files)
      * - favicon.ico, logo.svg, images, fonts
      */
-    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|woff2?|ico|css|js)).*)',
+    '/((?!_next/static|_next/image|favicon.ico|.*\\.(?:svg|png|jpg|jpeg|gif|webp|woff2?|ico|css|js|txt)).*)',
   ],
 };

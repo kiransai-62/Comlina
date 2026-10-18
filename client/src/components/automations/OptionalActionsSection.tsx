@@ -36,17 +36,9 @@ export function OptionalActionsSection({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 5</span>
-          <span>•</span>
-          <span>Optional actions</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
-          Growth Gates & Intermediary Actions
+        <h2 className="text-xl font-black text-[#111110]">
+          Follower Gate &amp; Lead Collection
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Optionally qualify users with follow checks or email collection before delivering your resource.
-        </p>
       </div>
 
       {/* Visual Workflow Sequence Diagram */}

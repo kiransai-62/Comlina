@@ -32,7 +32,9 @@ import {
   FileText
 } from 'lucide-react';
 import { useUIStore } from '@/stores/uiStore';
+import { useWorkspaceStore } from '@/stores/workspaceStore';
 import { authService } from '@/lib/auth';
+import { api } from '@/lib/api';
 import { instagramApi } from '@/features/instagram/api';
 import { ConnectedInstagramAccount } from '@/features/instagram/types';
 import { usePlan } from '@/hooks/usePlan';
@@ -44,21 +46,31 @@ type TabType = 'general' | 'notifications' | 'billing' | 'danger';
 
 export default function SettingsPage() {
   const showToast = useUIStore((s) => s.showToast);
+  const currentWorkspace = useWorkspaceStore((s) => s.currentWorkspace);
+  const updateCurrentWorkspaceName = useWorkspaceStore((s) => s.updateCurrentWorkspaceName);
   const [activeTab, setActiveTab] = useState<TabType>('general');
   const [toastAlert, setToastAlert] = useState<string | null>(null);
-  const { planTier, planConfig, usage, fetchUsage, openUpgradeModal, switchPlanDev } = usePlan();
+  const { planTier, planConfig, usage, fetchUsage, openUpgradeModal, switchPlanDev, isLoadingUsage: isPlanLoading } = usePlan();
 
   useEffect(() => {
     fetchUsage();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Profile Information state
+  // Profile Information state (dynamic authenticated user data)
   const [fullName, setFullName] = useState('');
   const [email, setEmail] = useState('');
   const [phone, setPhone] = useState('');
-  const [workspaceName, setWorkspaceName] = useState('Personal Workspace');
+  const [avatarUrl, setAvatarUrl] = useState('');
+  const [isSavingProfile, setIsSavingProfile] = useState(false);
+  const [isPhotoDialogOpen, setIsPhotoDialogOpen] = useState(false);
+  const [tempPhotoUrl, setTempPhotoUrl] = useState('');
+
+  // Workspace Settings state (authoritative workspace data)
+  const [workspaceName, setWorkspaceName] = useState('');
   const [timezone, setTimezone] = useState('(GMT+05:30) India Standard Time');
   const [language, setLanguage] = useState('English');
+  const [isUpdatingWorkspace, setIsUpdatingWorkspace] = useState(false);
 
   // Automation Preferences Toggles
   const [followCheck, setFollowCheck] = useState(true);
@@ -72,7 +84,6 @@ export default function SettingsPage() {
   const [notifyRate, setNotifyRate] = useState(true);
 
   // Modals & Popups
-  const [isUpgradeModalOpen, setIsUpgradeModalOpen] = useState(false);
   const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
   const [deleteConfirmText, setDeleteConfirmText] = useState('');
 
@@ -82,21 +93,161 @@ export default function SettingsPage() {
     setTimeout(() => setToastAlert(null), 3000);
   };
 
+  // Derive initials dynamically from full name or email (fallback 'CR')
+  const userInitials = React.useMemo(() => {
+    if (fullName && fullName.trim()) {
+      const parts = fullName.trim().split(/\s+/);
+      if (parts.length >= 2) {
+        return (parts[0][0] + parts[parts.length - 1][0]).toUpperCase();
+      }
+      return parts[0].slice(0, 2).toUpperCase();
+    }
+    if (email && email.trim()) {
+      return email.slice(0, 2).toUpperCase();
+    }
+    return 'CR';
+  }, [fullName, email]);
+
+  // Load authoritative user profile, active workspace, and saved preferences
   useEffect(() => {
-    async function loadUser() {
-      const u = await authService.getUser();
-      if (u) {
-        if (u.fullName) setFullName(u.fullName);
-        if (u.email) setEmail(u.email);
-      } else {
-        setFullName('Creator');
-        setEmail('');
+    async function loadAuthoritativeData() {
+      try {
+        const u = await authService.getUser();
+        if (u) {
+          if (u.fullName) setFullName(u.fullName);
+          if (u.email) setEmail(u.email);
+          if (u.phone) setPhone(u.phone);
+          if (u.avatarUrl) setAvatarUrl(u.avatarUrl);
+          if (u.timezone) setTimezone(u.timezone);
+        }
+
+        // Fetch authoritative active workspace name
+        try {
+          const ws = await api.get<any>('/workspaces/current');
+          if (ws?.name) {
+            setWorkspaceName(ws.name);
+          }
+        } catch {
+          if (currentWorkspace?.name) {
+            setWorkspaceName(currentWorkspace.name);
+          }
+        }
+
+        // Load persisted automation preferences & language
+        if (typeof window !== 'undefined') {
+          const wsId = currentWorkspace?.id || 'default';
+          const savedPrefs = localStorage.getItem(`comlina_automation_preferences_${wsId}`);
+          if (savedPrefs) {
+            try {
+              const parsed = JSON.parse(savedPrefs);
+              if (typeof parsed.followCheck === 'boolean') setFollowCheck(parsed.followCheck);
+              if (typeof parsed.publicReply === 'boolean') setPublicReply(parsed.publicReply);
+              if (typeof parsed.stopDuplicate === 'boolean') setStopDuplicate(parsed.stopDuplicate);
+            } catch {
+              // ignore
+            }
+          }
+
+          const savedLang = localStorage.getItem(`comlina_ws_lang_${wsId}`);
+          if (savedLang) {
+            setLanguage(savedLang);
+          }
+        }
+      } catch (err) {
+        console.error('Failed to load user settings:', err);
       }
     }
-    loadUser();
-  }, []);
+    loadAuthoritativeData();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentWorkspace?.id]);
 
-  const { data: connectedAccounts = [] } = useQuery<ConnectedInstagramAccount[]>({
+  // Save profile changes via profile update API
+  const handleSaveProfile = async () => {
+    setIsSavingProfile(true);
+    try {
+      const res = await authService.updateProfile({
+        fullName,
+        phone,
+        avatarUrl: avatarUrl || undefined,
+        timezone,
+      });
+      if (res.success && res.user) {
+        if (res.user.fullName !== undefined) setFullName(res.user.fullName);
+        if (res.user.phone !== undefined) setPhone(res.user.phone);
+        if (res.user.avatarUrl !== undefined) setAvatarUrl(res.user.avatarUrl);
+        triggerToast('Profile updated successfully!');
+      } else {
+        triggerToast(res.error || 'Failed to update profile');
+      }
+    } catch (err: any) {
+      triggerToast(err.message || 'Error updating profile');
+    } finally {
+      setIsSavingProfile(false);
+    }
+  };
+
+  // Update workspace settings via backend API and persist preferences
+  const handleUpdateWorkspace = async () => {
+    if (!workspaceName.trim()) {
+      triggerToast('Workspace name cannot be empty');
+      return;
+    }
+    setIsUpdatingWorkspace(true);
+    try {
+      const updatedWs = await api.patch<any>('/workspaces/current', { name: workspaceName.trim() });
+      if (updatedWs?.name) {
+        setWorkspaceName(updatedWs.name);
+        updateCurrentWorkspaceName(updatedWs.name);
+      }
+      // Also update user's preferred timezone
+      await authService.updateProfile({ timezone });
+      // Save language preference in local workspace config
+      if (typeof window !== 'undefined') {
+        const wsId = currentWorkspace?.id || 'default';
+        localStorage.setItem(`comlina_ws_lang_${wsId}`, language);
+      }
+      triggerToast('Workspace preferences updated!');
+    } catch (err: any) {
+      triggerToast(err.message || 'Failed to update workspace preferences');
+    } finally {
+      setIsUpdatingWorkspace(false);
+    }
+  };
+
+  // Toggle automation preferences and persist immediately
+  const handleTogglePreference = (key: 'followCheck' | 'publicReply' | 'stopDuplicate') => {
+    const wsId = currentWorkspace?.id || 'default';
+    let newFollowCheck = followCheck;
+    let newPublicReply = publicReply;
+    let newStopDuplicate = stopDuplicate;
+
+    if (key === 'followCheck') {
+      newFollowCheck = !followCheck;
+      setFollowCheck(newFollowCheck);
+      triggerToast(`Default follow check ${newFollowCheck ? 'enabled' : 'disabled'}`);
+    } else if (key === 'publicReply') {
+      newPublicReply = !publicReply;
+      setPublicReply(newPublicReply);
+      triggerToast(`Default public reply ${newPublicReply ? 'enabled' : 'disabled'}`);
+    } else if (key === 'stopDuplicate') {
+      newStopDuplicate = !stopDuplicate;
+      setStopDuplicate(newStopDuplicate);
+      triggerToast(`Stop on duplicate ${newStopDuplicate ? 'enabled' : 'disabled'}`);
+    }
+
+    if (typeof window !== 'undefined') {
+      localStorage.setItem(
+        `comlina_automation_preferences_${wsId}`,
+        JSON.stringify({
+          followCheck: newFollowCheck,
+          publicReply: newPublicReply,
+          stopDuplicate: newStopDuplicate,
+        })
+      );
+    }
+  };
+
+  const { data: connectedAccounts = [], isLoading: isAccountsLoading } = useQuery<ConnectedInstagramAccount[]>({
     queryKey: ['instagram-accounts'],
     queryFn: () => instagramApi.listAccounts(),
   });
@@ -121,17 +272,11 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── Top Header Title Section (matching exact Accounts & Analytics breadcrumb style) ── */}
+      {/* ── Page Header ── */}
       <div>
-        <div className="text-[11px] font-bold text-[#70706B] tracking-wider uppercase mb-1">
-          SETTINGS
-        </div>
         <h1 className="text-2xl lg:text-[28px] font-extrabold text-[#111110] tracking-tight">
           Settings
         </h1>
-        <p className="text-xs lg:text-sm text-[#70706B] mt-1">
-          Manage your account, preferences and application settings.
-        </p>
       </div>
 
       {/* ── Clean Horizontal Tabs ── */}
@@ -161,30 +306,38 @@ export default function SettingsPage() {
         })}
       </div>
 
-      {/* ── TAB 1: GENERAL (The Exact 2-Column Redesign Matching User Screenshot) ── */}
+      {/* ── TAB 1: GENERAL ── */}
       {activeTab === 'general' && (
         <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
           
           {/* Left Column (~65% = 8 cols) */}
           <div className="lg:col-span-8 space-y-6">
 
-            {/* 1. Profile Information */}
+            {/* 1. Profile */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-6 shadow-2xs">
-              <div className="mb-5">
-                <h2 className="text-sm font-bold text-[#111110]">Profile Information</h2>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  This information will be used across your workspace.
-                </p>
+              <div className="mb-4">
+                <h2 className="text-sm font-bold text-[#111110]">Profile</h2>
               </div>
 
               <div className="flex flex-col sm:flex-row items-start gap-6 pb-2">
                 <div className="flex items-center gap-4">
-                  <div className="w-14 h-14 rounded-full bg-[#111110] text-white flex items-center justify-center font-bold text-base shadow-xs shrink-0">
-                    KS
-                  </div>
+                  {avatarUrl ? (
+                    <img 
+                      src={avatarUrl} 
+                      alt={fullName || 'Profile Avatar'} 
+                      className="w-14 h-14 rounded-full object-cover shadow-xs shrink-0 border border-[#ECECE8]" 
+                    />
+                  ) : (
+                    <div className="w-14 h-14 rounded-full bg-[#111110] text-white flex items-center justify-center font-bold text-base shadow-xs shrink-0">
+                      {userInitials}
+                    </div>
+                  )}
                   <button
                     type="button"
-                    onClick={() => triggerToast('Avatar change dialog opened')}
+                    onClick={() => {
+                      setTempPhotoUrl(avatarUrl || '');
+                      setIsPhotoDialogOpen(true);
+                    }}
                     className="px-3.5 py-1.5 bg-white border border-[#ECECE8] hover:bg-[#F9F9F8] text-[#111110] text-xs font-semibold rounded-lg shadow-2xs transition-colors cursor-pointer"
                   >
                     Change Photo
@@ -198,6 +351,7 @@ export default function SettingsPage() {
                       type="text"
                       value={fullName}
                       onChange={(e) => setFullName(e.target.value)}
+                      placeholder="Your full name"
                       className="w-full flex-1 px-3.5 py-2 bg-[#FBFBFA] border border-[#ECECE8] rounded-lg text-xs text-[#111110] font-medium focus:bg-white focus:border-[#15803D] outline-none transition-all shadow-2xs"
                     />
                   </div>
@@ -207,8 +361,9 @@ export default function SettingsPage() {
                     <input
                       type="email"
                       value={email}
-                      onChange={(e) => setEmail(e.target.value)}
-                      className="w-full flex-1 px-3.5 py-2 bg-[#FBFBFA] border border-[#ECECE8] rounded-lg text-xs text-[#111110] font-medium focus:bg-white focus:border-[#15803D] outline-none transition-all shadow-2xs"
+                      disabled
+                      placeholder="your.email@example.com"
+                      className="w-full flex-1 px-3.5 py-2 bg-[#F4F4F1] border border-[#ECECE8] rounded-lg text-xs text-[#70706B] font-medium outline-none cursor-not-allowed shadow-2xs"
                     />
                   </div>
 
@@ -218,6 +373,7 @@ export default function SettingsPage() {
                       type="text"
                       value={phone}
                       onChange={(e) => setPhone(e.target.value)}
+                      placeholder="+1 (555) 000-0000"
                       className="w-full flex-1 px-3.5 py-2 bg-[#FBFBFA] border border-[#ECECE8] rounded-lg text-xs text-[#111110] font-medium focus:bg-white focus:border-[#15803D] outline-none transition-all shadow-2xs"
                     />
                   </div>
@@ -227,21 +383,19 @@ export default function SettingsPage() {
               <div className="flex justify-end pt-3 border-t border-[#ECECE8] mt-4">
                 <button
                   type="button"
-                  onClick={() => triggerToast('Profile information saved!')}
-                  className="px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+                  disabled={isSavingProfile}
+                  onClick={handleSaveProfile}
+                  className="px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
                 >
-                  Save Profile
+                  {isSavingProfile ? 'Saving...' : 'Save Profile'}
                 </button>
               </div>
             </div>
 
-            {/* 2. Workspace Settings */}
+            {/* 2. Workspace */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-6 shadow-2xs">
-              <div className="mb-5">
-                <h2 className="text-sm font-bold text-[#111110]">Workspace Settings</h2>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  Manage your workspace preferences.
-                </p>
+              <div className="mb-4">
+                <h2 className="text-sm font-bold text-[#111110]">Workspace</h2>
               </div>
 
               <div className="space-y-3.5">
@@ -251,6 +405,7 @@ export default function SettingsPage() {
                     type="text"
                     value={workspaceName}
                     onChange={(e) => setWorkspaceName(e.target.value)}
+                    placeholder="Workspace name"
                     className="w-full flex-1 px-3.5 py-2 bg-[#FBFBFA] border border-[#ECECE8] rounded-lg text-xs text-[#111110] font-medium focus:bg-white focus:border-[#15803D] outline-none transition-all shadow-2xs"
                   />
                 </div>
@@ -289,21 +444,19 @@ export default function SettingsPage() {
               <div className="flex justify-end pt-3 border-t border-[#ECECE8] mt-4">
                 <button
                   type="button"
-                  onClick={() => triggerToast('Workspace preferences updated!')}
-                  className="px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
+                  disabled={isUpdatingWorkspace}
+                  onClick={handleUpdateWorkspace}
+                  className="px-4 py-2 bg-[#062E1A] hover:bg-[#0A4A2A] disabled:opacity-50 text-white text-xs font-semibold rounded-lg shadow-xs transition-all cursor-pointer"
                 >
-                  Update Workspace
+                  {isUpdatingWorkspace ? 'Updating...' : 'Update Workspace'}
                 </button>
               </div>
             </div>
 
             {/* 3. Automation Preferences */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-6 shadow-2xs">
-              <div className="mb-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-bold text-[#111110]">Automation Preferences</h2>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  Set default behavior for your automations.
-                </p>
               </div>
 
               <div className="space-y-4 divide-y divide-[#ECECE8]">
@@ -317,7 +470,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setFollowCheck(!followCheck); triggerToast(`Follow check ${!followCheck ? 'enabled' : 'disabled'}`); }}
+                    onClick={() => handleTogglePreference('followCheck')}
                     className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
                       followCheck ? 'bg-[#064125]' : 'bg-[#E0E0DA]'
                     }`}
@@ -338,7 +491,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setPublicReply(!publicReply); triggerToast(`Public reply ${!publicReply ? 'enabled' : 'disabled'}`); }}
+                    onClick={() => handleTogglePreference('publicReply')}
                     className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
                       publicReply ? 'bg-[#064125]' : 'bg-[#E0E0DA]'
                     }`}
@@ -359,7 +512,7 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => { setStopDuplicate(!stopDuplicate); triggerToast(`Stop on duplicate ${!stopDuplicate ? 'enabled' : 'disabled'}`); }}
+                    onClick={() => handleTogglePreference('stopDuplicate')}
                     className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out outline-none ${
                       stopDuplicate ? 'bg-[#064125]' : 'bg-[#E0E0DA]'
                     }`}
@@ -374,11 +527,8 @@ export default function SettingsPage() {
 
             {/* 4. Data & Privacy */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-6 shadow-2xs">
-              <div className="mb-5">
+              <div className="mb-4">
                 <h2 className="text-sm font-bold text-[#111110]">Data & Privacy</h2>
-                <p className="text-xs text-[#70706B] mt-0.5">
-                  Manage your data and privacy settings.
-                </p>
               </div>
 
               <div className="space-y-4 divide-y divide-[#ECECE8]">
@@ -431,31 +581,51 @@ export default function SettingsPage() {
           {/* Right Column (~35% = 4 cols) */}
           <div className="lg:col-span-4 space-y-6">
 
-            {/* 1. Plan & Usage Card */}
+            {/* 1. Plan & Usage Card (Authoritative usePlan hooks) */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-5 shadow-2xs">
               <div className="flex items-center justify-between mb-3">
                 <span className="text-xs font-bold text-[#111110]">Plan & Usage</span>
-                <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
+                <PlanBadge tier={planTier} size="xs" />
               </div>
-              <div className="text-sm font-bold text-[#111110]">Starter Plan</div>
-              <div className="text-xs text-[#70706B] mt-0.5 mb-2">5 / 10 automations</div>
+              <div className="text-sm font-bold text-[#111110] capitalize">{planConfig.name} Plan</div>
+              <div className="text-xs text-[#70706B] mt-0.5 mb-2">
+                {isPlanLoading
+                  ? 'Loading usage...'
+                  : usage
+                  ? `${usage.active_automations} / ${usage.max_automations} automations`
+                  : '0 / 10 automations'}
+              </div>
               <div className="w-full bg-[#ECECE8] h-2 rounded-full overflow-hidden mb-4">
-                <div className="bg-[#064125] h-full w-1/2 rounded-full" />
+                <div 
+                  className="bg-[#064125] h-full rounded-full transition-all duration-300"
+                  style={{
+                    width: `${
+                      usage && usage.max_automations > 0
+                        ? Math.min(100, Math.max(5, (usage.active_automations / usage.max_automations) * 100))
+                        : 10
+                    }%`
+                  }}
+                />
               </div>
               <button
                 type="button"
-                disabled
-                className="w-full py-2 bg-white border border-[#ECECE8] text-xs font-semibold text-[#70706B] rounded-lg text-center shadow-2xs flex items-center justify-center gap-1.5 opacity-50 cursor-not-allowed"
+                onClick={() => openUpgradeModal(planTier === 'PREMIUM' ? 'PRO' : 'PREMIUM')}
+                className="w-full py-2 bg-[#064125] hover:bg-[#0A5A34] active:scale-[0.99] text-xs font-semibold text-white rounded-lg text-center shadow-2xs flex items-center justify-center gap-1.5 transition-all cursor-pointer"
               >
-                <ArrowUpRight size={14} />
-                <span>Upgrade Plan (Coming soon)</span>
+                <Sparkles size={14} className="text-[#86EFAC]" />
+                <span>
+                  {planTier === 'PRO'
+                    ? 'Manage Entitlements'
+                    : planTier === 'PREMIUM'
+                    ? 'Upgrade to Pro'
+                    : 'Upgrade Plan'}
+                </span>
               </button>
             </div>
 
             {/* 2. Connected Integrations Card */}
             <div className="bg-white border border-[#ECECE8] rounded-xl p-5 shadow-2xs">
-              <div className="text-xs font-bold text-[#111110]">Connected Integrations</div>
-              <p className="text-xs text-[#70706B] mt-0.5 mb-3.5">Manage third-party integrations.</p>
+              <div className="text-xs font-bold text-[#111110] mb-3">Connected Integrations</div>
 
               <div className="space-y-3">
                 {/* Instagram Row */}
@@ -466,7 +636,15 @@ export default function SettingsPage() {
                     </div>
                     <div>
                       <div className="text-xs font-bold text-[#111110]">Instagram</div>
-                      <div className="text-[11px] text-[#70706B]">3 accounts connected</div>
+                      <div className="text-[11px] text-[#70706B]">
+                        {isAccountsLoading
+                          ? 'Loading...'
+                          : connectedAccounts.length === 0
+                          ? 'Not connected'
+                          : connectedAccounts.length === 1
+                          ? `@${connectedAccounts[0].username} • Connected`
+                          : `${connectedAccounts.length} Connected`}
+                      </div>
                     </div>
                   </div>
                   <Link
@@ -490,8 +668,8 @@ export default function SettingsPage() {
                   </div>
                   <button
                     type="button"
-                    onClick={() => triggerToast('Google Drive connector initiated')}
-                    className="px-3 py-1 bg-white border border-[#ECECE8] hover:bg-[#F9F9F8] text-xs font-medium text-[#111110] rounded-lg shadow-2xs cursor-pointer"
+                    onClick={() => triggerToast('Google Drive integration will be available in an upcoming release.')}
+                    className="px-3 py-1 bg-white border border-[#ECECE8] hover:bg-[#F9F9F8] text-xs font-medium text-[#70706B] rounded-lg shadow-2xs cursor-pointer"
                   >
                     Connect
                   </button>
@@ -551,7 +729,7 @@ export default function SettingsPage() {
 
                 <button
                   type="button"
-                  onClick={() => triggerToast('Activity logs opened')}
+                  onClick={() => triggerToast('Activity logs will be available in an upcoming release.')}
                   className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-[#FBFBFA] transition-colors text-left cursor-pointer"
                 >
                   <div className="flex items-center gap-3">
@@ -561,18 +739,24 @@ export default function SettingsPage() {
                       <div className="text-[11px] text-[#70706B]">View recent account activity.</div>
                     </div>
                   </div>
-                  <ChevronRight size={14} className="text-[#9E9E96]" />
+                  <div className="flex items-center gap-1">
+                    <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
+                    <ChevronRight size={14} className="text-[#9E9E96]" />
+                  </div>
                 </button>
 
                 <button
                   type="button"
-                  onClick={() => triggerToast('Signing out...')}
-                  className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-[#FFF5F5] transition-colors text-left cursor-pointer"
+                  onClick={async () => {
+                    triggerToast('Signing out...');
+                    await authService.signOut();
+                  }}
+                  className="w-full flex items-center justify-between p-2 rounded-lg hover:bg-[#FFF5F5] transition-colors text-left cursor-pointer group"
                 >
-                  <div className="flex items-center gap-3 text-[#111110]">
+                  <div className="flex items-center gap-3 text-[#111110] group-hover:text-[#DC2626] transition-colors">
                     <LogOut size={16} />
                     <div>
-                      <div className="text-xs font-semibold text-[#111110]">Log Out</div>
+                      <div className="text-xs font-semibold">Log Out</div>
                       <div className="text-[11px] text-[#70706B]">Sign out from your account.</div>
                     </div>
                   </div>
@@ -894,57 +1078,65 @@ export default function SettingsPage() {
         </div>
       )}
 
-      {/* ── MODAL: UPGRADE TO PRO ── */}
-      {isUpgradeModalOpen && (
+      {/* ── MODAL: CHANGE PROFILE PHOTO ── */}
+      {isPhotoDialogOpen && (
         <div className="fixed inset-0 bg-black/50 backdrop-blur-xs flex items-center justify-center p-4 z-50 animate-in fade-in duration-150">
-          <div className="bg-white rounded-2xl border border-[#ECECE8] shadow-2xl w-full max-w-xl p-6">
-            <div className="flex items-center justify-between mb-5">
-              <div>
-                <span className="text-[10px] font-bold text-[#15803D] uppercase tracking-wider">UPGRADE PLAN</span>
-                <h3 className="text-lg font-bold text-[#111110] mt-0.5">Scale Your Automations</h3>
-              </div>
-              <button onClick={() => setIsUpgradeModalOpen(false)} className="text-[#70706B] hover:text-[#111110]">
-                <X size={18} />
+          <div className="bg-white rounded-2xl border border-[#ECECE8] shadow-2xl w-full max-w-sm p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="text-sm font-bold text-[#111110]">Change Profile Photo</h3>
+              <button 
+                type="button"
+                onClick={() => setIsPhotoDialogOpen(false)} 
+                className="text-[#70706B] hover:text-[#111110] cursor-pointer"
+              >
+                <X size={16} />
               </button>
             </div>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-5">
-              <div className="border-2 border-[#15803D] bg-[#F4FBF6] rounded-xl p-4.5 relative shadow-2xs">
-                <span className="absolute -top-2.5 right-3 px-2 py-0.2 bg-[#15803D] text-white rounded-full text-[9px] font-bold">
-                  POPULAR
-                </span>
-                <div className="font-bold text-sm text-[#064125]">Pro Plan</div>
-                <div className="text-xl font-extrabold text-[#111110] mt-1">$29<span className="text-xs font-normal text-[#70706B]">/mo</span></div>
-                <ul className="mt-3 space-y-1.5 text-xs text-[#064125]">
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> Unlimited Automations</li>
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> 10,000 monthly DMs</li>
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> 3 Instagram Accounts</li>
-                </ul>
+            <p className="text-xs text-[#70706B]">Enter an image URL for your workspace profile photo:</p>
+            <input
+              type="url"
+              value={tempPhotoUrl}
+              onChange={(e) => setTempPhotoUrl(e.target.value)}
+              placeholder="https://example.com/photo.jpg"
+              className="w-full px-3.5 py-2 bg-[#FBFBFA] border border-[#ECECE8] rounded-lg text-xs text-[#111110] outline-none focus:border-[#15803D]"
+            />
+            <div className="flex items-center justify-end gap-2 pt-2">
+              {avatarUrl && (
                 <button
                   type="button"
-                  disabled
-                  className="w-full mt-4 py-2 bg-[#15803D] opacity-50 cursor-not-allowed text-white text-xs font-bold rounded-lg"
+                  onClick={async () => {
+                    setAvatarUrl('');
+                    setTempPhotoUrl('');
+                    setIsPhotoDialogOpen(false);
+                    await authService.updateProfile({ avatarUrl: '' });
+                    triggerToast('Profile photo removed');
+                  }}
+                  className="px-3 py-1.5 text-xs text-[#DC2626] hover:bg-red-50 rounded-lg font-medium mr-auto cursor-pointer"
                 >
-                  Coming soon
+                  Remove
                 </button>
-              </div>
-
-              <div className="border border-[#ECECE8] bg-white rounded-xl p-4.5">
-                <div className="font-bold text-sm text-[#111110]">Agency Plan</div>
-                <div className="text-xl font-extrabold text-[#111110] mt-1">$79<span className="text-xs font-normal text-[#70706B]">/mo</span></div>
-                <ul className="mt-3 space-y-1.5 text-xs text-[#70706B]">
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> Unlimited Everything</li>
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> 10 Accounts</li>
-                  <li className="flex items-center gap-1.5"><Check size={13} className="text-[#15803D]" /> Priority Webhook Queue</li>
-                </ul>
-                <button
-                  type="button"
-                  disabled
-                  className="w-full mt-4 py-2 bg-white border border-[#ECECE8] opacity-50 cursor-not-allowed text-xs font-bold text-[#70706B] rounded-lg"
-                >
-                  Coming soon
-                </button>
-              </div>
+              )}
+              <button
+                type="button"
+                onClick={() => setIsPhotoDialogOpen(false)}
+                className="px-3.5 py-1.5 border border-[#ECECE8] text-xs font-semibold rounded-lg text-[#70706B] hover:bg-gray-50 cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (tempPhotoUrl.trim()) {
+                    setAvatarUrl(tempPhotoUrl.trim());
+                    setIsPhotoDialogOpen(false);
+                    await authService.updateProfile({ avatarUrl: tempPhotoUrl.trim() });
+                    triggerToast('Profile photo updated!');
+                  }
+                }}
+                className="px-4 py-1.5 bg-[#064125] hover:bg-[#0A5A34] text-white text-xs font-semibold rounded-lg cursor-pointer"
+              >
+                Save Photo
+              </button>
             </div>
           </div>
         </div>

@@ -31,9 +31,6 @@ export default function AnalyticsPage() {
       {/* Header */}
       <div>
         <h1 className="text-2xl font-bold text-[#111110] tracking-tight">Analytics</h1>
-        <p className="text-sm text-[#70706B] mt-1">
-          Engagement volume, link click-through conversions, and ROI metrics.
-        </p>
       </div>
 
       {isError && (
@@ -70,7 +67,7 @@ export default function AnalyticsPage() {
       )}
 
       {/* Metric Cards */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 sm:gap-4">
+      <div className="grid grid-cols-1 min-[420px]:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4">
         <div className="bg-white border border-[#ECECE8] rounded-xl p-5 shadow-sm">
           <div className="text-xs font-semibold text-[#70706B]">Comments Triggered</div>
           <div className="text-3xl font-extrabold text-[#111110] mt-2">

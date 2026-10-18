@@ -213,9 +213,6 @@ export function StoryMentionFlow({
             <h1 className="text-xl sm:text-2xl font-black text-[#111110] tracking-tight">
               Story Mention Flow
             </h1>
-            <p className="text-xs text-[#70706B] font-normal">
-              Auto-reply in DM when someone mentions or tags you in their story
-            </p>
           </div>
         </div>
 
@@ -236,9 +233,8 @@ export function StoryMentionFlow({
 
         <div className="flex items-center justify-between gap-4">
           <div>
-            <div className="text-xs font-bold text-[#111110]">Enable Reply to All</div>
-            <p className="text-xs text-[#70706B] mt-0.5">
-              Respond to ALL story mentions without keyword matching
+            <p className="text-xs text-[#70706B]">
+              Respond to all story mentions without keyword matching
             </p>
           </div>
           <label className="relative inline-flex items-center cursor-pointer shrink-0">
@@ -264,9 +260,6 @@ export function StoryMentionFlow({
         </div>
 
         <div className="space-y-2">
-          <label className="block text-xs font-bold text-[#111110]">
-            Keywords in their story text (leave empty to reply to every mention)
-          </label>
           <div className="flex items-center gap-2">
             <input
               type="text"
@@ -341,10 +334,6 @@ export function StoryMentionFlow({
           <h2 className="text-sm font-bold text-[#111110]">Story Mention Response</h2>
         </div>
 
-        <label className="block text-xs font-bold text-[#111110]">
-          Message sent when someone mentions you in their story
-        </label>
-
         <div className="relative">
           <textarea
             rows={4}
@@ -357,8 +346,7 @@ export function StoryMentionFlow({
           </div>
         </div>
 
-        <div className="flex items-center justify-between text-[11px] text-[#70706B] pt-0.5">
-          <span>This message is sent automatically when someone mentions you in their story</span>
+        <div className="flex items-center justify-end text-[11px] text-[#70706B] pt-0.5">
           <span>{mentionResponseText.length}/1000 characters</span>
         </div>
       </div>

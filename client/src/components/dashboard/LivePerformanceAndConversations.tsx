@@ -107,8 +107,8 @@ export function LivePerformanceAndConversations() {
             </Link>
           </div>
 
-          {/* Table Header */}
-          <div className="grid grid-cols-12 gap-2 text-xs font-medium text-[#70706B] pb-3 border-b border-[#ECECE8]/80 px-1">
+          {/* Table Header (Tablet & Desktop) */}
+          <div className="hidden sm:grid grid-cols-12 gap-2 text-xs font-medium text-[#70706B] pb-3 border-b border-[#ECECE8]/80 px-1">
             <div className="col-span-4">User</div>
             <div className="col-span-3">Message</div>
             <div className="col-span-3">Status</div>
@@ -175,36 +175,62 @@ export function LivePerformanceAndConversations() {
                 const time = item.last_message_at || 'Recently';
 
                 return (
-                  <div 
-                    key={item.id}
-                    className="grid grid-cols-12 gap-2 items-center py-3.5 px-1 hover:bg-[#FBFBFA] rounded-xl transition-colors text-xs"
-                  >
-                    {/* User Column */}
-                    <div className="col-span-4 flex items-center gap-2.5 min-w-0">
-                      <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-[#ECECE8] bg-[#EAF6EE] text-[#064125] flex items-center justify-center font-bold text-[11px]">
-                        {initial}
+                  <div key={item.id}>
+                    {/* Mobile Card Row (< 640px) */}
+                    <div className="sm:hidden py-3 px-1 hover:bg-[#FBFBFA] rounded-xl transition-colors space-y-1.5">
+                      <div className="flex items-center justify-between gap-2">
+                        <div className="flex items-center gap-2 min-w-0">
+                          <div className="w-7 h-7 rounded-full overflow-hidden shrink-0 border border-[#ECECE8] bg-[#EAF6EE] text-[#064125] flex items-center justify-center font-bold text-[10px]">
+                            {initial}
+                          </div>
+                          <span className="font-semibold text-[#111110] text-xs truncate">
+                            {username.startsWith('@') ? username : `@${username}`}
+                          </span>
+                        </div>
+                        <span className="text-[11px] text-[#70706B] font-normal shrink-0">
+                          {time}
+                        </span>
                       </div>
-                      <span className="font-semibold text-[#111110] truncate">
-                        {username.startsWith('@') ? username : `@${username}`}
-                      </span>
+                      <div className="flex items-center justify-between gap-2 pl-9">
+                        <p className="text-xs text-[#70706B] truncate flex-1 min-w-0">
+                          {message}
+                        </p>
+                        <span className="inline-flex items-center gap-1 text-[11px] font-medium text-[#15803D] shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-[#15803D]" />
+                          {status}
+                        </span>
+                      </div>
                     </div>
 
-                    {/* Message Column */}
-                    <div className="col-span-3 text-[#111110] font-normal truncate pr-2">
-                      {message}
-                    </div>
+                    {/* Tablet & Desktop Grid Row (>= 640px) */}
+                    <div className="hidden sm:grid grid-cols-12 gap-2 items-center py-3.5 px-1 hover:bg-[#FBFBFA] rounded-xl transition-colors text-xs">
+                      {/* User Column */}
+                      <div className="col-span-4 flex items-center gap-2.5 min-w-0">
+                        <div className="w-8 h-8 rounded-full overflow-hidden shrink-0 border border-[#ECECE8] bg-[#EAF6EE] text-[#064125] flex items-center justify-center font-bold text-[11px]">
+                          {initial}
+                        </div>
+                        <span className="font-semibold text-[#111110] truncate">
+                          {username.startsWith('@') ? username : `@${username}`}
+                        </span>
+                      </div>
 
-                    {/* Status Column */}
-                    <div className="col-span-3 flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-[#15803D] shrink-0" />
-                      <span className="text-[#111110] font-normal text-xs">
-                        {status}
-                      </span>
-                    </div>
+                      {/* Message Column */}
+                      <div className="col-span-3 text-[#111110] font-normal truncate pr-2">
+                        {message}
+                      </div>
 
-                    {/* Time Column */}
-                    <div className="col-span-2 text-right text-[#70706B] font-normal">
-                      {time}
+                      {/* Status Column */}
+                      <div className="col-span-3 flex items-center gap-1.5">
+                        <span className="w-2 h-2 rounded-full bg-[#15803D] shrink-0" />
+                        <span className="text-[#111110] font-normal text-xs">
+                          {status}
+                        </span>
+                      </div>
+
+                      {/* Time Column */}
+                      <div className="col-span-2 text-right text-[#70706B] font-normal">
+                        {time}
+                      </div>
                     </div>
                   </div>
                 );

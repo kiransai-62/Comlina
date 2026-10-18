@@ -33,17 +33,9 @@ export function TriggerSection({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-5">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 2</span>
-          <span>•</span>
-          <span>When this happens</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
+        <h2 className="text-xl font-black text-[#111110]">
           When someone comments on
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Select which content will trigger this automation.
-        </p>
       </div>
 
       {/* 3 Scope Options */}

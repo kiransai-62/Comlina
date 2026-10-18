@@ -49,7 +49,7 @@ export function BottomNav() {
       {/* "More" Slide-up Sheet */}
       {isMoreSheetOpen && (
         <div 
-          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 lg:hidden flex flex-col justify-end animate-in fade-in duration-150"
+          className="fixed inset-0 bg-black/50 backdrop-blur-xs z-50 md:hidden flex flex-col justify-end animate-in fade-in duration-150"
           onClick={() => setIsMoreSheetOpen(false)}
         >
           <div 
@@ -101,7 +101,7 @@ export function BottomNav() {
       {/* Fixed Bottom Navigation Bar */}
       <nav 
         aria-label="Mobile Bottom Navigation"
-        className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-[#ECECE8] z-40 lg:hidden shadow-lg pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-1.5"
+        className="fixed bottom-0 inset-x-0 bg-white/95 backdrop-blur-md border-t border-[#ECECE8] z-40 md:hidden shadow-lg pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-1.5"
       >
         <div className="flex items-center justify-around px-2 max-w-lg mx-auto">
           {mainTabs.map((tab) => {

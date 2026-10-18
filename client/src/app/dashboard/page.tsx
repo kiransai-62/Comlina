@@ -35,13 +35,7 @@ import { BrandLogo } from '@/components/BrandLogo';
 import { MovingArrowConnector } from '@/components/MovingArrowConnector';
 import { LivePerformanceAndConversations } from '@/components/dashboard/LivePerformanceAndConversations';
 
-const Info = ({ size = 14, className = '' }: { size?: number; className?: string }) => (
-  <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
-    <circle cx="12" cy="12" r="10" />
-    <line x1="12" y1="16" x2="12" y2="12" />
-    <line x1="12" y1="8" x2="12.01" y2="8" />
-  </svg>
-);
+
 
 export default function DashboardOverviewPage() {
   const [time, setTime] = useState('');
@@ -180,9 +174,6 @@ export default function DashboardOverviewPage() {
               </span>
             </div>
           </div>
-          <p className="text-sm text-[#70706B] mt-1">
-            Let&apos;s turn your Instagram into real conversations.
-          </p>
         </div>
 
         <div className="flex items-center gap-2.5">
@@ -286,20 +277,9 @@ export default function DashboardOverviewPage() {
           {/* 2. Stats Overview Section Header */}
           <div className="flex items-start justify-between flex-wrap gap-3 mb-4">
             <div>
-              <div className="text-[11px] font-bold text-[#15803D] tracking-wider uppercase mb-1">
-                INSTA SAAS
-              </div>
               <h2 className="text-2xl font-bold text-[#111110] tracking-tight">
-                Stats Overview
+                Overview
               </h2>
-              <p className="text-xs text-[#70706B] mt-1">
-                Hover on any card to view more details. Live telemetry from Meta API.
-              </p>
-            </div>
-
-            <div className="inline-flex items-center gap-1.5 px-3 py-1.5 bg-[#FAFAF8] border border-[#ECECE8] rounded-full text-xs text-[#70706B]">
-              <Info size={14} className="text-[#15803D]" />
-              <span>Interactive cards for a cleaner and focused dashboard.</span>
             </div>
           </div>
 

@@ -21,17 +21,9 @@ export function ConditionsSection({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-5">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 3</span>
-          <span>•</span>
-          <span>And these conditions</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
-          And this comment has
+        <h2 className="text-xl font-black text-[#111110]">
+          Target Keywords
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Specify which keywords qualify for this automated response.
-        </p>
       </div>
 
       {/* Match Mode Radios */}

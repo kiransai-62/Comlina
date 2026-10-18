@@ -54,17 +54,9 @@ export function TheyWillGetSection({
   return (
     <section className="bg-white border border-[#ECECE8] rounded-2xl p-6 sm:p-7 shadow-xs space-y-6">
       <div>
-        <div className="flex items-center gap-2 text-xs font-bold text-[#15803D] uppercase tracking-wider">
-          <span>Step 4</span>
-          <span>•</span>
-          <span>They will get</span>
-        </div>
-        <h2 className="text-xl font-black text-[#111110] mt-1">
-          Automated Response & Messages
+        <h2 className="text-xl font-black text-[#111110]">
+          Automated Response &amp; Messages
         </h2>
-        <p className="text-xs text-[#70706B] mt-0.5">
-          Configure what happens publicly under the post and privately inside direct messages.
-        </p>
       </div>
 
       <div className="space-y-6">
