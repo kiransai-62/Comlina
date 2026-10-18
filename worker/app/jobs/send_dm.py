@@ -120,6 +120,14 @@ async def send_dm_job(
                 await _update_webhook_event(session, event_id, provider_event_id, "IGNORED", "Instagram account not found")
                 return execution_summary
 
+            # Defense-in-depth: Skip self-event if sender is the business account itself
+            if sender_id and account and str(sender_id) == str(account.ig_user_id):
+                logger.info(f"Skipping self-event for account {account.id} (sender_id == ig_user_id == {sender_id})")
+                execution_summary["status"] = "SKIPPED_SELF_EVENT"
+                execution_summary["reason"] = "SELF_EVENT_SKIPPED"
+                await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED", "Self-event skipped")
+                return execution_summary
+
             # Decrypt access token
             meta_client = None
             try:
@@ -194,17 +202,28 @@ async def send_dm_job(
                     conversation.unread_count = (conversation.unread_count or 0) + 1
                     await session.flush()
 
-                # 4. Store incoming message from viewer (sender_type="CONTACT")
-                contact_msg = Message(
-                    workspace_id=account.workspace_id,
-                    conversation_id=conversation.id,
-                    sender_type="CONTACT",
-                    text=incoming_text,
-                    meta_message_id=provider_event_id,
-                    created_at=datetime.now(timezone.utc)
-                )
-                session.add(contact_msg)
-                await session.flush()
+                # 4. Store incoming message from viewer (sender_type="CONTACT") with deduplication
+                is_duplicate = False
+                if provider_event_id:
+                    stmt_dup = select(Message.id).where(
+                        Message.conversation_id == conversation.id,
+                        Message.meta_message_id == provider_event_id
+                    )
+                    res_dup = await session.execute(stmt_dup)
+                    if res_dup.scalar_one_or_none():
+                        is_duplicate = True
+
+                if not is_duplicate:
+                    contact_msg = Message(
+                        workspace_id=account.workspace_id,
+                        conversation_id=conversation.id,
+                        sender_type="CONTACT",
+                        text=incoming_text,
+                        meta_message_id=provider_event_id,
+                        created_at=datetime.now(timezone.utc)
+                    )
+                    session.add(contact_msg)
+                    await session.flush()
 
                 # 4.5 Follow-to-Unlock Recheck Pipeline
                 custom_fields = dict(contact.custom_fields) if isinstance(contact.custom_fields, dict) else {}

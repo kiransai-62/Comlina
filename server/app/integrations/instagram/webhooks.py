@@ -19,8 +19,12 @@ class InstagramWebhookParser:
             business_id = str(entry.get("id", ""))
             # 1. Direct Messages
             for msg in entry.get("messaging", []):
-                # Ignore echo messages (sent by the page/account itself) to prevent reply loops
+                # Ignore echo messages or self-messages (sent by the page/account itself) to prevent reply loops
                 if msg.get("message", {}).get("is_echo"):
+                    continue
+
+                sender_id = str(msg.get("sender", {}).get("id", ""))
+                if sender_id and business_id and sender_id == business_id:
                     continue
 
                 provider_id = msg.get("message", {}).get("mid") or f"msg_{msg.get('timestamp')}_{msg.get('sender', {}).get('id')}"

@@ -96,6 +96,17 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 return execution_summary
 
+            # Defense-in-depth: Skip self-comment if commenter is the account itself
+            commenter_id = event_data.get("sender_id")
+            if commenter_id and account and str(commenter_id) == str(account.ig_user_id):
+                logger.info(f"Skipping self-comment for account {account.id} (commenter_id == ig_user_id == {commenter_id})")
+                execution_summary["status"] = "SKIPPED_SELF_EVENT"
+                execution_summary["reason"] = "SELF_EVENT_SKIPPED"
+                await _update_webhook_event(
+                    session, event_id, event_data.get("provider_event_id"), "PROCESSED", "Self-comment skipped"
+                )
+                return execution_summary
+
             meta_client = None
             if account.access_token_encrypted:
                 try:
@@ -127,8 +138,8 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 return execution_summary
 
-            # 2.5 Enforce Workspace Plan Quota & Limits
-            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id)
+            # 2.5 Enforce Workspace Plan Quota & Limits with row-level locks
+            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id).with_for_update()
             res_ws = await session.execute(stmt_ws)
             workspace = res_ws.scalar_one_or_none()
             tier = (workspace.plan_tier or "FREE").upper() if workspace else "FREE"
@@ -141,7 +152,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 stmt_post = select(PostUsage).where(
                     PostUsage.workspace_id == account.workspace_id,
                     PostUsage.media_id == media_id
-                )
+                ).with_for_update()
                 res_post = await session.execute(stmt_post)
                 post_usage = res_post.scalars().first()
 
@@ -321,16 +332,28 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                             except (ValueError, TypeError):
                                 pass
 
-                            dm_msg = Message(
-                                workspace_id=account.workspace_id,
-                                conversation_id=conversation.id,
-                                sender_type="BOT",
-                                text=msg_text,
-                                meta_message_id=meta_msg_id,
-                                automation_id=auto_id_val,
-                                created_at=datetime.now(timezone.utc)
-                            )
-                            session.add(dm_msg)
+                            # Deduplicate bot message by meta_message_id if provided
+                            is_dup_bot_msg = False
+                            if meta_msg_id:
+                                stmt_dup_bot = select(Message.id).where(
+                                    Message.conversation_id == conversation.id,
+                                    Message.meta_message_id == meta_msg_id
+                                )
+                                res_dup_bot = await session.execute(stmt_dup_bot)
+                                if res_dup_bot.scalar_one_or_none():
+                                    is_dup_bot_msg = True
+
+                            if not is_dup_bot_msg:
+                                dm_msg = Message(
+                                    workspace_id=account.workspace_id,
+                                    conversation_id=conversation.id,
+                                    sender_type="BOT",
+                                    text=msg_text,
+                                    meta_message_id=meta_msg_id,
+                                    automation_id=auto_id_val,
+                                    created_at=datetime.now(timezone.utc)
+                                )
+                                session.add(dm_msg)
 
             # 5. P1.7: Analytics Event Recording
             if account and execution_summary["actions_executed"] > 0:
