@@ -578,36 +578,34 @@ async def handle_oauth_callback(
     await db.refresh(account)
     return account
 
-@router.post("/connect-dev-account", response_model=InstagramAccountOut)
-async def connect_dev_account(
-    user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Instantly connects a verified Instagram Creator account in development mode.
-    Allows testing full automation and conversation flows immediately without waiting for Meta console whitelisting.
-    """
-    if settings.ENVIRONMENT != "development":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Dev account connection is disabled in production environments."
+if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ROUTES:
+    @router.post("/connect-dev-account", response_model=InstagramAccountOut)
+    async def connect_dev_account(
+        user: User = Depends(get_current_user),
+        workspace: Workspace = Depends(get_current_workspace),
+        db: AsyncSession = Depends(get_db)
+    ):
+        """
+        Instantly connects a verified Instagram Creator account in development mode.
+        Allows testing full automation and conversation flows immediately without waiting for Meta console whitelisting.
+        """
+        dev_token = settings.INSTAGRAM_ACCESS_TOKEN or os.getenv("DEV_IG_ACCESS_TOKEN", "")
+        if not dev_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No dev access token configured. Set INSTAGRAM_ACCESS_TOKEN or DEV_IG_ACCESS_TOKEN in environment."
+            )
+
+        stmt = select(InstagramAccount).where(
+            _get_owner_filter(workspace, user),
+            InstagramAccount.is_active == True
         )
+        res = await db.execute(stmt)
+        existing = res.scalar_one_or_none()
 
-    stmt = select(InstagramAccount).where(
-        _get_owner_filter(workspace, user),
-        InstagramAccount.is_active == True
-    )
-    res = await db.execute(stmt)
-    existing = res.scalar_one_or_none()
-    dev_token = settings.INSTAGRAM_ACCESS_TOKEN or (
-        settings.META_WEBHOOK_VERIFY_TOKEN if settings.META_WEBHOOK_VERIFY_TOKEN.startswith("IGAA") else ""
-    ) or os.getenv("DEV_IG_ACCESS_TOKEN", "")
-
-    now = datetime.now(timezone.utc)
-    user_id = user.id if (hasattr(user, "id") and user.id is not None) else None
-    if existing:
-        if dev_token:
+        now = datetime.now(timezone.utc)
+        user_id = user.id if (hasattr(user, "id") and user.id is not None) else None
+        if existing:
             existing.access_token_encrypted = encrypt_token(dev_token)
             if user_id:
                 existing.user_id = user_id
@@ -617,32 +615,32 @@ async def connect_dev_account(
             existing.last_error_code = None
             await db.commit()
             await db.refresh(existing)
-        return existing
+            return existing
 
-    dev_ig_id = "29500779709524479"
-    account = InstagramAccount(
-        workspace_id=workspace.id,
-        user_id=user_id,
-        ig_user_id=dev_ig_id,
-        username="aiworkbench.lab",
-        account_type="MEDIA_CREATOR",
-        follower_count=19,
-        profile_pic_url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80",
-        access_token_encrypted=encrypt_token(dev_token),
-        token_expires_at=now + timedelta(days=60),
-        is_active=True,
-        auth_method="DEV_MOCK",
-        connection_status="CONNECTED",
-        last_validated_at=now,
-        last_refreshed_at=now,
-        last_error_code=None,
-        connected_at=now,
-        updated_at=now
-    )
-    db.add(account)
-    await db.commit()
-    await db.refresh(account)
-    return account
+        dev_ig_id = os.getenv("DEV_IG_USER_ID", "29500779709524479")
+        account = InstagramAccount(
+            workspace_id=workspace.id,
+            user_id=user_id,
+            ig_user_id=dev_ig_id,
+            username=os.getenv("DEV_IG_USERNAME", "aiworkbench.lab"),
+            account_type="MEDIA_CREATOR",
+            follower_count=19,
+            profile_pic_url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80",
+            access_token_encrypted=encrypt_token(dev_token),
+            token_expires_at=now + timedelta(days=60),
+            is_active=True,
+            auth_method="DEV_MOCK",
+            connection_status="CONNECTED",
+            last_validated_at=now,
+            last_refreshed_at=now,
+            last_error_code=None,
+            connected_at=now,
+            updated_at=now
+        )
+        db.add(account)
+        await db.commit()
+        await db.refresh(account)
+        return account
 
 @router.post("/accounts/{account_id}/refresh-token", response_model=InstagramAccountOut)
 async def refresh_account_token(

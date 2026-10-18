@@ -382,42 +382,43 @@ async def razorpay_webhook(
     return {"status": "success", "event": event_type}
 
 
-@router.post("/dev/switch-plan")
-async def dev_switch_plan(
-    body: PlanSwitchRequest,
-    workspace: Workspace = Depends(get_current_workspace),
-    db: AsyncSession = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Developer convenience endpoint to instantly switch workspace plan tier
-    for testing Free, Premium, and Pro feature access.
-    """
-    tier_str = body.plan_tier.strip().upper()
-    if tier_str not in (PlanTier.FREE.value, PlanTier.PREMIUM.value, PlanTier.PRO.value):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid tier '{tier_str}'. Supported tiers: FREE, PREMIUM, PRO"
-        )
+if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ROUTES:
+    @router.post("/dev/switch-plan")
+    async def dev_switch_plan(
+        body: PlanSwitchRequest,
+        workspace: Workspace = Depends(get_current_workspace),
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
+        """
+        Developer convenience endpoint to instantly switch workspace plan tier
+        for testing Free, Premium, and Pro feature access.
+        """
+        tier_str = body.plan_tier.strip().upper()
+        if tier_str not in (PlanTier.FREE.value, PlanTier.PREMIUM.value, PlanTier.PRO.value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid tier '{tier_str}'. Supported tiers: FREE, PREMIUM, PRO"
+            )
 
-    ws = await db.get(Workspace, workspace.id)
-    if ws:
-        ws.plan_tier = tier_str
-        ws.plan_status = "ACTIVE"
-        ws.updated_at = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(ws)
-        workspace = ws
-    else:
-        workspace.plan_tier = tier_str
-        workspace.plan_status = "ACTIVE"
-        workspace.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+        ws = await db.get(Workspace, workspace.id)
+        if ws:
+            ws.plan_tier = tier_str
+            ws.plan_status = "ACTIVE"
+            ws.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(ws)
+            workspace = ws
+        else:
+            workspace.plan_tier = tier_str
+            workspace.plan_status = "ACTIVE"
+            workspace.updated_at = datetime.now(timezone.utc)
+            await db.commit()
 
-    logger.info(f"[DEV] Switched workspace {workspace.id} plan tier to {tier_str}")
+        logger.info(f"[DEV] Switched workspace {workspace.id} plan tier to {tier_str}")
 
-    return {
-        "success": True,
-        "plan_tier": workspace.plan_tier,
-        "plan_status": workspace.plan_status,
-        "message": f"Workspace plan set to {tier_str}."
-    }
+        return {
+            "success": True,
+            "plan_tier": workspace.plan_tier,
+            "plan_status": workspace.plan_status,
+            "message": f"Workspace plan set to {tier_str}."
+        }
