@@ -2,7 +2,7 @@ import os
 import base64
 import hashlib
 from pathlib import Path
-from typing import List, Union
+from typing import List, Union, Optional
 from dotenv import load_dotenv
 from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -31,11 +31,42 @@ if not os.getenv("SUPABASE_URL") and os.getenv("NEXT_PUBLIC_SUPABASE_URL"):
 if not os.getenv("SUPABASE_ANON_KEY") and os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY"):
     os.environ["SUPABASE_ANON_KEY"] = os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
 
-def get_deterministic_dev_encryption_key() -> str:
+DEV_FERNET_KEY_SEED = b"comlina-local-dev-fernet-key-seed-2026"
+DEV_DETERMINISTIC_FERNET_KEY = base64.urlsafe_b64encode(hashlib.sha256(DEV_FERNET_KEY_SEED).digest()).decode("utf-8")
+DEV_JWT_SECRET_SEED = b"comlina-local-dev-jwt-seed-2026"
+DEV_DETERMINISTIC_JWT_SECRET = hashlib.sha256(DEV_JWT_SECRET_SEED).hexdigest()
+LEGACY_DEV_JWT_HASH = "7690839f0e48e6970ec9cee3efdb57774c0ef99d0366f5f58a91202a3428d6b6"
+
+PLACEHOLDER_SUBSTRINGS = (
+    "your_",
+    "placeholder",
+    "change_me",
+    "mock",
+    "dev_secret",
+    "example",
+    "todo",
+    "xxx",
+)
+
+def is_placeholder(val: Optional[str]) -> bool:
+    if not val:
+        return True
+    lowered = val.lower().strip()
+    return any(p in lowered for p in PLACEHOLDER_SUBSTRINGS)
+
+def is_known_dev_jwt_secret(secret: str) -> bool:
+    if not secret:
+        return True
+    h = hashlib.sha256(secret.encode("utf-8")).hexdigest()
+    return h in (
+        LEGACY_DEV_JWT_HASH,
+        hashlib.sha256(DEV_DETERMINISTIC_JWT_SECRET.encode("utf-8")).hexdigest(),
+    )
+
+def get_deterministic_dev_encryption_key(environment: str = "development") -> str:
     key = os.getenv("TOKEN_ENCRYPTION_KEY", "")
-    if not key:
-        raw_seed = hashlib.sha256(b"comlina-local-dev-fernet-key-seed-2026").digest()
-        key = base64.urlsafe_b64encode(raw_seed).decode("utf-8")
+    if not key and environment == "development":
+        key = DEV_DETERMINISTIC_FERNET_KEY
     return key
 
 
@@ -58,20 +89,13 @@ class Settings(BaseSettings):
     SUPABASE_ANON_KEY: str = (
         os.getenv("SUPABASE_ANON_KEY", "")
         or os.getenv("SUPABASE_PUBLISHABLE_KEY", "")
-        or "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InZyZndnb2lndG1peGtrdW52cm53Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3ODk5ODQ0MTIsImV4cCI6MjEwNTU2MDQxMn0.fDzpZvoeziDZW7i2qvTcAs5x1fWx9uQxhCeHBVcpgEw"
+        or os.getenv("NEXT_PUBLIC_SUPABASE_ANON_KEY", "")
     )
     SUPABASE_PUBLISHABLE_KEY: str = os.getenv("SUPABASE_PUBLISHABLE_KEY", "") or os.getenv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY", "")
-    SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "") or (f"{os.getenv('SUPABASE_URL', 'https://vrfwgoigtmixkkunvrnw.supabase.co').rstrip('/')}/auth/v1/.well-known/jwks.json")
+    SUPABASE_JWKS_URL: str = os.getenv("SUPABASE_JWKS_URL", "")
     SUPABASE_SECRET_KEY: str = os.getenv("SUPABASE_SECRET_KEY", "")
-    SUPABASE_JWT_SECRET: str = os.getenv(
-        "SUPABASE_JWT_SECRET",
-        "gZcO366odD6VzDrwzP07A3z8ND91jJCspWbGt0B+jgLfVq6WKU4uVvTD1TKxAah25MKz0iJZB4xhOE6loX4PnQ=="
-    )
-    BACKEND_JWT_SECRET: str = (
-        os.getenv("BACKEND_JWT_SECRET")
-        or os.getenv("SUPABASE_JWT_SECRET")
-        or "gZcO366odD6VzDrwzP07A3z8ND91jJCspWbGt0B+jgLfVq6WKU4uVvTD1TKxAah25MKz0iJZB4xhOE6loX4PnQ=="
-    )
+    SUPABASE_JWT_SECRET: str = os.getenv("SUPABASE_JWT_SECRET", "")
+    BACKEND_JWT_SECRET: str = os.getenv("BACKEND_JWT_SECRET", "")
 
     # Database & Redis Queue
     DATABASE_URL: str = os.getenv("DATABASE_URL", "postgresql+asyncpg://postgres:postgres@localhost:5432/comlina")
@@ -82,15 +106,21 @@ class Settings(BaseSettings):
     DB_POOL_RECYCLE: int = int(os.getenv("DB_POOL_RECYCLE", "1800"))
     DB_SSL: bool = os.getenv("DB_SSL", "").lower() in ("true", "1", "yes", "require")
 
-    # Token Encryption (AES-256-GCM / Fernet)
-    TOKEN_ENCRYPTION_KEY: str = get_deterministic_dev_encryption_key()
+    # Token Encryption (AES-256-GCM / MultiFernet)
+    TOKEN_ENCRYPTION_KEY: str = os.getenv("TOKEN_ENCRYPTION_KEY", "")
+    TOKEN_ENCRYPTION_KEYS: str = os.getenv("TOKEN_ENCRYPTION_KEYS", "")
 
     # Razorpay Payments & Subscriptions
     RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "rzp_test_comlina2026")
     RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "dev_secret_razorpay_comlina_2026")
     RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "dev_webhook_secret_comlina_2026")
 
-    # CORS
+    # Proxy trust & dev settings
+    TRUSTED_PROXY_COUNT: int = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
+    ENABLE_DEV_ROUTES: bool = os.getenv("ENABLE_DEV_ROUTES", "false").lower() in ("true", "1", "yes")
+
+    # CORS & Allowed Origins
+    ALLOWED_ORIGINS: Union[List[str], str] = os.getenv("ALLOWED_ORIGINS", "")
     CORS_ORIGINS: Union[List[str], str] = [
         "http://localhost:3000",
         "http://localhost:5173",
@@ -99,9 +129,62 @@ class Settings(BaseSettings):
         "https://comlina.onrender.com"
     ]
 
+    def get_encryption_keys(self) -> List[str]:
+        keys = []
+        if self.TOKEN_ENCRYPTION_KEYS:
+            for k in self.TOKEN_ENCRYPTION_KEYS.split(","):
+                k_clean = k.strip()
+                if k_clean and k_clean not in keys:
+                    keys.append(k_clean)
+        if self.TOKEN_ENCRYPTION_KEY:
+            k_clean = self.TOKEN_ENCRYPTION_KEY.strip()
+            if k_clean and k_clean not in keys:
+                keys.insert(0, k_clean)
+        if not keys and self.ENVIRONMENT == "development":
+            keys.append(DEV_DETERMINISTIC_FERNET_KEY)
+        return keys
+
+    def get_primary_encryption_key(self) -> str:
+        keys = self.get_encryption_keys()
+        return keys[0] if keys else ""
+
+    def get_allowed_origins(self) -> List[str]:
+        if self.ALLOWED_ORIGINS:
+            if isinstance(self.ALLOWED_ORIGINS, list):
+                return [str(o).strip() for o in self.ALLOWED_ORIGINS if str(o).strip()]
+            val = str(self.ALLOWED_ORIGINS).strip()
+            if val.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(val)
+                    if isinstance(parsed, list):
+                        return [str(i).strip() for i in parsed if str(i).strip()]
+                except Exception:
+                    pass
+            origins = [o.strip() for o in val.split(",") if o.strip()]
+            if origins:
+                return origins
+        if isinstance(self.CORS_ORIGINS, list):
+            return [str(o).strip() for o in self.CORS_ORIGINS if str(o).strip()]
+        return [str(self.CORS_ORIGINS).strip()]
+
     @field_validator("CORS_ORIGINS", mode="before")
     @classmethod
     def assemble_cors_origins(cls, v: Union[str, List[str]]) -> List[str]:
+        allowed_env = os.getenv("ALLOWED_ORIGINS", "")
+        if allowed_env:
+            if allowed_env.startswith("["):
+                import json
+                try:
+                    parsed = json.loads(allowed_env)
+                    if isinstance(parsed, list):
+                        return [str(i).strip() for i in parsed if str(i).strip()]
+                except Exception:
+                    pass
+            origins = [i.strip() for i in allowed_env.split(",") if i.strip()]
+            if origins:
+                return origins
+
         if isinstance(v, str):
             if v.startswith("["):
                 import json
@@ -124,23 +207,104 @@ class Settings(BaseSettings):
         extra="ignore"
     )
 
+    def model_post_init(self, __context) -> None:
+        if self.ENVIRONMENT == "development":
+            if not self.SUPABASE_JWT_SECRET:
+                self.SUPABASE_JWT_SECRET = DEV_DETERMINISTIC_JWT_SECRET
+            if not self.BACKEND_JWT_SECRET:
+                self.BACKEND_JWT_SECRET = self.SUPABASE_JWT_SECRET
+            if not self.TOKEN_ENCRYPTION_KEY and not self.TOKEN_ENCRYPTION_KEYS:
+                self.TOKEN_ENCRYPTION_KEY = DEV_DETERMINISTIC_FERNET_KEY
+        elif self.ENVIRONMENT == "production":
+            if not self.BACKEND_JWT_SECRET:
+                self.BACKEND_JWT_SECRET = self.SUPABASE_JWT_SECRET
+            self.validate_production_secrets()
+
     def validate_production_secrets(self) -> None:
-        """Enforce that production deployments have real, cryptographically secure secrets."""
-        if self.ENVIRONMENT != "development":
-            if not self.TOKEN_ENCRYPTION_KEY or len(self.TOKEN_ENCRYPTION_KEY) < 32:
-                raise ValueError("Production error: TOKEN_ENCRYPTION_KEY must be a valid 32-byte base64 key")
-            if not self.SUPABASE_JWT_SECRET or "mock" in self.SUPABASE_JWT_SECRET.lower():
-                raise ValueError("Production error: SUPABASE_JWT_SECRET must be configured with a valid secret")
-            if not self.META_APP_SECRET or "mock" in self.META_APP_SECRET.lower():
-                raise ValueError("Production error: META_APP_SECRET must be configured for Meta integrations")
-            if not self.META_WEBHOOK_VERIFY_TOKEN or "mock" in self.META_WEBHOOK_VERIFY_TOKEN.lower() or "your_" in self.META_WEBHOOK_VERIFY_TOKEN.lower():
-                raise ValueError("Production error: META_WEBHOOK_VERIFY_TOKEN must be configured with a strong secret")
-            if "*" in self.CORS_ORIGINS:
-                raise ValueError("Production error: Wildcard '*' in CORS_ORIGINS is prohibited when credentials are enabled")
+        """Enforce fail-fast configuration for production deployments."""
+        if self.ENVIRONMENT != "production":
+            return
+
+        # 1. DATABASE_URL
+        if not self.DATABASE_URL or is_placeholder(self.DATABASE_URL):
+            raise ValueError("Production error: DATABASE_URL must be set and cannot be a placeholder")
+        if "sqlite" in self.DATABASE_URL.lower():
+            raise ValueError("Production error: SQLite database fallback is strictly forbidden in production; PostgreSQL is required")
+        if not (self.DATABASE_URL.startswith("postgresql://") or self.DATABASE_URL.startswith("postgres://") or self.DATABASE_URL.startswith("postgresql+")):
+            raise ValueError("Production error: DATABASE_URL must be a PostgreSQL connection URL in production")
+
+        # 2. REDIS_URL
+        if not self.REDIS_URL or is_placeholder(self.REDIS_URL):
+            raise ValueError("Production error: REDIS_URL must be set and cannot be a placeholder")
+        if not (self.REDIS_URL.startswith("redis://") or self.REDIS_URL.startswith("rediss://")):
+            raise ValueError("Production error: REDIS_URL must be a redis:// or rediss:// connection URL")
+
+        # 3. SUPABASE_URL
+        if not self.SUPABASE_URL or is_placeholder(self.SUPABASE_URL) or "your-project-ref" in self.SUPABASE_URL:
+            raise ValueError("Production error: SUPABASE_URL must be configured with a real project URL")
+        if not self.SUPABASE_URL.startswith("https://"):
+            raise ValueError("Production error: SUPABASE_URL must use HTTPS")
+
+        # 4. JWT verification key material
+        jwt_secret = self.BACKEND_JWT_SECRET or self.SUPABASE_JWT_SECRET
+        has_valid_secret = bool(
+            jwt_secret
+            and not is_placeholder(jwt_secret)
+            and not is_known_dev_jwt_secret(jwt_secret)
+            and len(jwt_secret) >= 32
+        )
+        has_valid_jwks = bool(
+            self.SUPABASE_JWKS_URL
+            and self.SUPABASE_JWKS_URL.startswith("https://")
+            and not is_placeholder(self.SUPABASE_JWKS_URL)
+        )
+        if not (has_valid_secret or has_valid_jwks):
+            raise ValueError(
+                "Production error: Strong JWT verification key material is required. "
+                "Provide a non-default SUPABASE_JWT_SECRET/BACKEND_JWT_SECRET (>= 32 chars) or a valid HTTPS SUPABASE_JWKS_URL"
+            )
+
+        # 5. TOKEN_ENCRYPTION_KEY(S)
+        keys = self.get_encryption_keys()
+        if not keys:
+            raise ValueError("Production error: TOKEN_ENCRYPTION_KEY or TOKEN_ENCRYPTION_KEYS must be set in production")
+        for k in keys:
+            if is_placeholder(k):
+                raise ValueError("Production error: TOKEN_ENCRYPTION_KEY cannot contain placeholder values")
+            if k == DEV_DETERMINISTIC_FERNET_KEY:
+                raise ValueError("Production error: TOKEN_ENCRYPTION_KEY cannot use auto-generated or default dev key in production")
+            try:
+                decoded = base64.urlsafe_b64decode(k.encode("utf-8"))
+                if len(decoded) != 32:
+                    raise ValueError()
+            except Exception:
+                raise ValueError("Production error: TOKEN_ENCRYPTION_KEY must be a valid 32-byte urlsafe base64-encoded key")
+
+        # 6. META_APP_ID
+        if not self.META_APP_ID or is_placeholder(self.META_APP_ID):
+            raise ValueError("Production error: META_APP_ID must be configured for Meta integrations")
+
+        # 7. META_APP_SECRET
+        if not self.META_APP_SECRET or is_placeholder(self.META_APP_SECRET) or len(self.META_APP_SECRET) < 16:
+            raise ValueError("Production error: META_APP_SECRET must be configured with a valid secret (>= 16 chars)")
+
+        # 8. META_WEBHOOK_VERIFY_TOKEN
+        if not self.META_WEBHOOK_VERIFY_TOKEN or is_placeholder(self.META_WEBHOOK_VERIFY_TOKEN) or len(self.META_WEBHOOK_VERIFY_TOKEN) < 16:
+            raise ValueError("Production error: META_WEBHOOK_VERIFY_TOKEN must be configured with a strong secret (>= 16 chars)")
+
+        # 9. ALLOWED_ORIGINS
+        origins = self.get_allowed_origins()
+        if not origins:
+            raise ValueError("Production error: ALLOWED_ORIGINS must be configured in production")
+        if "*" in origins:
+            raise ValueError("Production error: Wildcard '*' in ALLOWED_ORIGINS is prohibited in production")
+        for origin in origins:
+            if not origin.startswith("https://"):
+                raise ValueError(f"Production error: Insecure HTTP origin '{origin}' forbidden in production; HTTPS required")
 
 settings = Settings()
 
-if settings.ENVIRONMENT != "development":
+if settings.ENVIRONMENT == "production":
     settings.validate_production_secrets()
 
 worker_settings = settings

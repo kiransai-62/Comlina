@@ -47,6 +47,11 @@ def resolve_database_url(configured_url: str, environment: str) -> str:
     accidental SQLite fallback in production.
     """
     normalized = normalize_async_database_url(configured_url)
+    if environment == "production":
+        if not normalized or "sqlite" in normalized.lower() or not normalized.startswith("postgresql"):
+            raise ValueError("Production error: SQLite database fallback is strictly prohibited in production. A valid PostgreSQL URL is required.")
+        return normalized
+
     if environment == "development" and "postgresql" in normalized:
         parsed = urlparse(normalized.replace("postgresql+asyncpg://", "http://"))
         host = (parsed.hostname or "localhost").lower()
