@@ -28,6 +28,7 @@ from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.exceptions import MetaGraphAPIError, MetaTokenExpiredError, MetaRateLimitError
 from app.core.encryption import encrypt_token, decrypt_token
+from app.core.replay_cache import replay_cache
 
 logger = logging.getLogger("instagram_api")
 router = APIRouter(prefix="/instagram", tags=["Instagram"])
@@ -345,23 +346,71 @@ def _is_allowed_redirect_uri(redirect_uri: Optional[str]) -> bool:
         parsed = urlparse(redirect_uri)
         if not parsed.scheme or not parsed.netloc:
             return False
+
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
+            return False
+
+        # Reject any credentials in URI authority (e.g. user:pass@host or host@attacker.com)
+        if parsed.username or parsed.password or "@" in parsed.netloc:
+            return False
+
         host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+
+        is_prod = (settings.ENVIRONMENT == "production")
+
+        # In production, scheme MUST be https
+        if is_prod and scheme != "https":
+            return False
+
+        # Canonical production domains
         allowed_hosts = {
-            "localhost",
-            "127.0.0.1",
-            "0.0.0.0",
             "app.comlina.ai",
             "comlina.ai",
             "www.comlina.ai",
+            "app.comlina.com",
             "comlina.com",
             "www.comlina.com",
         }
+
+        # Add host from configured META_REDIRECT_URI
         if settings.META_REDIRECT_URI:
             meta_parsed = urlparse(settings.META_REDIRECT_URI)
             if meta_parsed.hostname:
                 allowed_hosts.add(meta_parsed.hostname.lower())
-        if host in allowed_hosts or host.endswith(".onrender.com") or host.endswith(".vercel.app"):
+
+        # Add hosts from configured ALLOWED_ORIGINS
+        if settings.ALLOWED_ORIGINS:
+            origins = settings.ALLOWED_ORIGINS if isinstance(settings.ALLOWED_ORIGINS, list) else settings.ALLOWED_ORIGINS.split(",")
+            for orig in origins:
+                orig_clean = orig.strip()
+                if orig_clean:
+                    parsed_orig = urlparse(orig_clean)
+                    if parsed_orig.hostname:
+                        allowed_hosts.add(parsed_orig.hostname.lower())
+
+        # Add hosts from CORS_ORIGINS
+        if settings.CORS_ORIGINS:
+            cors_list = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else settings.CORS_ORIGINS.split(",")
+            for cor in cors_list:
+                cor_clean = cor.strip()
+                if cor_clean:
+                    parsed_cor = urlparse(cor_clean)
+                    if parsed_cor.hostname:
+                        allowed_hosts.add(parsed_cor.hostname.lower())
+
+        # Localhost/Loopback and staging wildcard suffixes allowed only in non-production environments
+        dev_hosts = {"localhost", "127.0.0.1", "0.0.0.0"}
+        if not is_prod:
+            allowed_hosts.update(dev_hosts)
+            if host.endswith(".onrender.com") or host.endswith(".vercel.app"):
+                return True
+
+        if host in allowed_hosts:
             return True
+
         return False
     except Exception:
         return False
@@ -371,8 +420,9 @@ def generate_oauth_state(workspace_id: uuid.UUID, user_id: Optional[uuid.UUID] =
     nonce = secrets.token_hex(16)
     uid_str = str(user_id) if user_id else "any"
     state_payload = f"{workspace_id}:{uid_str}:{timestamp}:{nonce}"
+    key = settings.get_primary_encryption_key() or settings.TOKEN_ENCRYPTION_KEY or "fallback_key"
     sig = hmac.new(
-        key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
+        key=key.encode("utf-8"),
         msg=state_payload.encode("utf-8"),
         digestmod=hashlib.sha256
     ).hexdigest()[:16]
@@ -386,6 +436,8 @@ def verify_oauth_state(
 ) -> bool:
     try:
         parts = state.split(":")
+        keys = settings.get_encryption_keys() or [settings.TOKEN_ENCRYPTION_KEY or "fallback_key"]
+
         # 5-part state: ws_id:user_id:timestamp:nonce:sig
         if len(parts) == 5:
             ws_id_str, u_id_str, ts_str, nonce, provided_sig = parts
@@ -398,24 +450,32 @@ def verify_oauth_state(
             if now - ts > max_age_seconds or ts > now + 300:
                 return False
             state_payload = f"{ws_id_str}:{u_id_str}:{ts_str}:{nonce}"
-            expected_sig = hmac.new(
-                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
-                msg=state_payload.encode("utf-8"),
-                digestmod=hashlib.sha256
-            ).hexdigest()[:16]
-            return hmac.compare_digest(provided_sig, expected_sig)
+            for k in keys:
+                expected_sig = hmac.new(
+                    key=k.encode("utf-8"),
+                    msg=state_payload.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).hexdigest()[:16]
+                if hmac.compare_digest(provided_sig, expected_sig):
+                    return True
+            return False
+
         # Legacy 3-part state: ws_id:nonce:sig (backwards compatibility)
         elif len(parts) == 3:
             ws_id_str, nonce, provided_sig = parts
             if ws_id_str != str(workspace_id):
                 return False
             state_payload = f"{ws_id_str}:{nonce}"
-            expected_sig = hmac.new(
-                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
-                msg=state_payload.encode("utf-8"),
-                digestmod=hashlib.sha256
-            ).hexdigest()[:16]
-            return hmac.compare_digest(provided_sig, expected_sig)
+            for k in keys:
+                expected_sig = hmac.new(
+                    key=k.encode("utf-8"),
+                    msg=state_payload.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).hexdigest()[:16]
+                if hmac.compare_digest(provided_sig, expected_sig):
+                    return True
+            return False
+
         return False
     except Exception:
         return False
@@ -451,11 +511,26 @@ async def handle_oauth_callback(
     queries Meta Graph API for connected Instagram Business Account details,
     and upserts InstagramAccount record with encrypted token and expiration date.
     """
+    # 0. Validate redirect_uri destination if supplied
+    if data.redirect_uri and not _is_allowed_redirect_uri(data.redirect_uri):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri destination."
+        )
+
     # 1. Verify CSRF OAuth state (bound to workspace and user with 15m expiration)
     if not data.state or not verify_oauth_state(data.state, workspace.id, user.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or missing OAuth state parameter (CSRF protection failed)."
+        )
+
+    # 2. Check and record OAuth state replay cache (single-use token)
+    state_hash = hashlib.sha256(data.state.encode("utf-8")).hexdigest()
+    if not await replay_cache.check_and_record(state_hash, ttl_seconds=900, namespace="oauth_state"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state parameter has already been used or expired."
         )
 
     try:

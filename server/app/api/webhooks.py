@@ -4,9 +4,11 @@ import base64
 import hashlib
 import secrets
 import hmac
+import time
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Depends, Form
+from app.core.replay_cache import replay_cache
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -287,7 +289,12 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def parse_signed_request(signed_request: str, app_secret: str) -> dict:
+def parse_signed_request(
+    signed_request: str,
+    app_secret: str,
+    max_age_seconds: int = 900,
+    check_replay: bool = True
+) -> dict:
     if not app_secret:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is not configured")
     try:
@@ -303,6 +310,57 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict:
         raise HTTPException(status_code=400, detail="Invalid signed_request signature")
     if not payload.get("user_id"):
         raise HTTPException(status_code=400, detail="signed_request has no user_id")
+
+    # TTL window check on issued_at timestamp
+    if "issued_at" in payload:
+        try:
+            issued_at = int(payload["issued_at"])
+            now = int(time.time())
+            if now - issued_at > max_age_seconds:
+                raise HTTPException(status_code=400, detail="signed_request has expired")
+            if issued_at > now + 300:
+                raise HTTPException(status_code=400, detail="signed_request timestamp is in the future")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid issued_at timestamp in signed_request")
+
+    # Replay protection check
+    if check_replay:
+        sig_hash = hashlib.sha256(sig_b64.encode("utf-8")).hexdigest()
+        if not replay_cache.check_and_record_sync(sig_hash, ttl_seconds=max_age_seconds, namespace="signed_request"):
+            raise HTTPException(status_code=400, detail="signed_request has already been processed or replayed")
+
+    return payload
+
+
+async def verify_and_parse_signed_request(
+    signed_request: str,
+    app_secret: str,
+    max_age_seconds: int = 900
+) -> dict:
+    """
+    Asynchronously parses and verifies signed_request, enforcing signature, TTL window,
+    and distributed replay cache prevention using Redis (with in-memory fallback).
+    """
+    payload = parse_signed_request(
+        signed_request,
+        app_secret,
+        max_age_seconds=max_age_seconds,
+        check_replay=False
+    )
+    try:
+        sig_b64 = signed_request.split(".", 1)[0]
+        sig_hash = hashlib.sha256(sig_b64.encode("utf-8")).hexdigest()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed signed_request")
+
+    is_fresh = await replay_cache.check_and_record(
+        sig_hash,
+        ttl_seconds=max_age_seconds,
+        namespace="signed_request"
+    )
+    if not is_fresh:
+        raise HTTPException(status_code=400, detail="signed_request has already been processed or replayed")
+
     return payload
 
 
@@ -313,7 +371,7 @@ async def _accounts_for(db: AsyncSession, ig_user_id: str):
 
 @router.post("/deauthorize")
 async def deauthorize_callback(signed_request: str = Form(...), db: AsyncSession = Depends(get_db)):
-    payload = parse_signed_request(signed_request, settings.META_APP_SECRET)
+    payload = await verify_and_parse_signed_request(signed_request, settings.META_APP_SECRET)
     for acc in await _accounts_for(db, payload["user_id"]):
         acc.is_active = False
         acc.access_token_encrypted = encrypt_token("REVOKED")
@@ -325,7 +383,7 @@ async def deauthorize_callback(signed_request: str = Form(...), db: AsyncSession
 
 @router.post("/data-deletion")
 async def data_deletion_callback(signed_request: str = Form(...), db: AsyncSession = Depends(get_db)):
-    payload = parse_signed_request(signed_request, settings.META_APP_SECRET)
+    payload = await verify_and_parse_signed_request(signed_request, settings.META_APP_SECRET)
     for acc in await _accounts_for(db, payload["user_id"]):
         conv_ids = select(Conversation.id).where(Conversation.instagram_account_id == acc.id)
         auto_ids = select(Automation.id).where(Automation.instagram_account_id == acc.id)
@@ -341,3 +399,4 @@ async def data_deletion_callback(signed_request: str = Form(...), db: AsyncSessi
     code = secrets.token_urlsafe(16)
     base = settings.META_REDIRECT_URI.split("/connect/")[0].rstrip("/")
     return {"url": f"{base}/data-deletion-status?code={code}", "confirmation_code": code}
+
