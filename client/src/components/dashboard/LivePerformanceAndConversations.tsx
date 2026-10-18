@@ -44,7 +44,7 @@ export function LivePerformanceAndConversations() {
   } = useQuery({
     queryKey: ['analytics-summary'],
     queryFn: () => analyticsApi.getSummary(),
-    refetchInterval: 30000,
+    refetchInterval: 10000,
   });
 
   // Safe list of real conversations
@@ -66,6 +66,14 @@ export function LivePerformanceAndConversations() {
     if (!hasActivity) {
       return { day, comments: 0, dms: 0 };
     }
+    if (dateRange === 'Last 7 days' && summary?.daily_stats && summary.daily_stats[idx]) {
+      const ds = summary.daily_stats[idx];
+      return {
+        day: ds.day,
+        comments: ds.comments,
+        dms: ds.dms,
+      };
+    }
     // If activity exists, distribute authentically across active period
     const factor = (idx + 1) / days.length;
     return {
@@ -74,6 +82,7 @@ export function LivePerformanceAndConversations() {
       dms: Math.round((totalDms / days.length) * factor * 1.5),
     };
   });
+
 
   const maxVal = Math.max(...chartData.flatMap((d) => [d.comments, d.dms]), 10);
   const ySteps = [maxVal, Math.round(maxVal * 0.66), Math.round(maxVal * 0.33), 0];

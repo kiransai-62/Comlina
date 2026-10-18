@@ -93,6 +93,7 @@ export default function DashboardOverviewPage() {
   } = useQuery({
     queryKey: ['analytics-summary'],
     queryFn: () => analyticsApi.getSummary(),
+    refetchInterval: 10_000,
   });
 
   const { 
@@ -102,6 +103,7 @@ export default function DashboardOverviewPage() {
   } = useQuery({
     queryKey: ['automations'],
     queryFn: () => automationsApi.list(),
+    refetchInterval: 15_000,
   });
 
   const { 
@@ -111,6 +113,7 @@ export default function DashboardOverviewPage() {
   } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => conversationsApi.list(),
+    refetchInterval: 10_000,
   });
 
   const totalDmsSent = summary?.stats_dms_sent ?? 0;
@@ -122,6 +125,12 @@ export default function DashboardOverviewPage() {
   const followerCountDisplay = primaryAccount?.follower_count != null 
     ? primaryAccount.follower_count.toLocaleString() 
     : '—';
+
+  const defaultWeeklyDays = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'];
+  const dailyStats = summary?.daily_stats && summary.daily_stats.length === 7
+    ? summary.daily_stats
+    : defaultWeeklyDays.map((day) => ({ day, date: '', dms: 0, comments: 0, count: 0, pct: 0 }));
+
 
   return (
     <div className="max-w-6xl mx-auto space-y-6 pb-12">
@@ -349,12 +358,14 @@ export default function DashboardOverviewPage() {
                   </div>
 
                   {!isStatsExpanded && (
-                    <div className="flex items-end gap-0.5 h-7 pb-0.5">
-                      {[28, 45, 62, 80, 100].map((h, i) => (
+                    <div className="flex items-end gap-0.5 h-7 pb-0.5" title="7-day activity sparkline">
+                      {dailyStats.map((item, i) => (
                         <div 
                           key={i} 
-                          style={{ height: `${h}%` }}
-                          className="w-1.5 bg-[#86EFAC] rounded-t-xs"
+                          style={{ height: item.pct > 0 ? `${item.pct}%` : '3px' }}
+                          className={`w-1.5 rounded-t-xs transition-all duration-300 ${
+                            item.pct > 0 ? 'bg-[#86EFAC]' : 'bg-[#E5E7EB]'
+                          }`}
                         />
                       ))}
                     </div>
@@ -370,27 +381,27 @@ export default function DashboardOverviewPage() {
               >
                 <div className="py-1">
                   <div className="flex items-end justify-between h-[68px] px-1 pb-1 border-b border-[#ECECE8] gap-1.5">
-                    {[
-                      { day: 'Mon', h: 22 },
-                      { day: 'Tue', h: 32 },
-                      { day: 'Wed', h: 48 },
-                      { day: 'Thu', h: 32 },
-                      { day: 'Fri', h: 68 },
-                      { day: 'Sat', h: 44 },
-                      { day: 'Sun', h: 96 }
-                    ].map((item, idx) => (
-                      <div key={idx} className="flex-1 flex flex-col items-center h-full justify-end">
+                    {dailyStats.map((item, idx) => (
+                      <div key={idx} className="flex-1 flex flex-col items-center h-full justify-end group/bar relative">
                         <div 
-                          style={{ height: `${item.h}%` }}
-                          className="w-3 rounded-t-xs transition-all duration-300 bg-[#86EFAC] hover:bg-[#15803D]"
+                          style={{ height: item.pct > 0 ? `${item.pct}%` : '3px' }}
+                          className={`w-3 rounded-t-xs transition-all duration-300 ${
+                            item.pct > 0 
+                              ? 'bg-[#86EFAC] group-hover/bar:bg-[#15803D]' 
+                              : 'bg-[#E5E7EB] group-hover/bar:bg-[#D1D5DB]'
+                          }`}
                         />
+                        {/* Hover Tooltip showing actual real-time count */}
+                        <div className="absolute -top-7 opacity-0 group-hover/bar:opacity-100 transition-opacity bg-[#111110] text-white text-[10px] px-1.5 py-0.5 rounded shadow-sm pointer-events-none whitespace-nowrap z-10">
+                          {item.count} {item.count === 1 ? 'msg' : 'msgs'}
+                        </div>
                       </div>
                     ))}
                   </div>
                   <div className="flex justify-between mt-1 px-1">
-                    {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day) => (
-                      <span key={day} className="text-[10px] text-[#9E9E96] flex-1 text-center">
-                        {day}
+                    {dailyStats.map((item) => (
+                      <span key={item.day} className="text-[10px] text-[#9E9E96] flex-1 text-center">
+                        {item.day}
                       </span>
                     ))}
                   </div>
@@ -469,16 +480,19 @@ export default function DashboardOverviewPage() {
                   </div>
 
                   {!isStatsExpanded && (
-                    <div className="flex items-end gap-0.5 h-7 pb-0.5">
-                      {[25, 40, 55, 75, 95].map((h, i) => (
+                    <div className="flex items-end gap-0.5 h-7 pb-0.5" title="Audience engagement sparkline">
+                      {dailyStats.map((item, i) => (
                         <div 
                           key={i} 
-                          style={{ height: `${h}%` }}
-                          className="w-1.5 bg-[#86EFAC] rounded-t-xs"
+                          style={{ height: totalLeads > 0 && item.pct > 0 ? `${item.pct}%` : '3px' }}
+                          className={`w-1.5 rounded-t-xs transition-all duration-300 ${
+                            totalLeads > 0 && item.pct > 0 ? 'bg-[#86EFAC]' : 'bg-[#E5E7EB]'
+                          }`}
                         />
                       ))}
                     </div>
                   )}
+
                 </div>
               </div>
 

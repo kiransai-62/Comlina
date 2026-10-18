@@ -119,6 +119,14 @@ class TestRemediation(unittest.IsolatedAsyncioTestCase):
             self.assertIn("total_comments", summary)
             self.assertIn("total_dms", summary)
             self.assertIn("total_contacts", summary)
+            self.assertIn("daily_stats", summary)
+            self.assertEqual(len(summary["daily_stats"]), 7)
+            self.assertEqual(summary["daily_stats"][0]["day"], "Mon")
+            self.assertEqual(summary["daily_stats"][6]["day"], "Sun")
+            for day_stat in summary["daily_stats"]:
+                self.assertIn("count", day_stat)
+                self.assertIn("pct", day_stat)
+                self.assertIn("date", day_stat)
 
     async def test_webhook_idempotent_insert_sqlite(self):
         from app.api.webhooks import _insert_webhook_event_idempotent

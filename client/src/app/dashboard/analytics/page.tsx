@@ -17,7 +17,9 @@ export default function AnalyticsPage() {
   const { data: summary, isLoading, isError, error, refetch } = useQuery<AnalyticsSummary>({
     queryKey: ['analytics-summary'],
     queryFn: () => analyticsApi.getSummary(),
+    refetchInterval: 10_000,
   });
+
 
   const comments = summary?.stats_comments ?? 0;
   const dmsSent = summary?.stats_dms_sent ?? 0;
@@ -134,22 +136,22 @@ export default function AnalyticsPage() {
           </div>
         ) : (
           <div className="h-48 flex items-end justify-between gap-3 pt-6 border-b border-[#ECECE8] pb-2">
-            {['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map((day, idx) => {
-              const maxActivity = Math.max(1, comments + dmsSent);
-              const height = hasActivity 
-                ? Math.round(((idx + 1) / 7) * ((comments + dmsSent) / maxActivity) * 100)
-                : 0;
-
-              return (
-                <div key={day} className="flex-1 flex flex-col items-center gap-2">
-                  <div 
-                    style={{ height: `${Math.max(4, Math.min(100, height))}%` }}
-                    className="w-full bg-[#062E1A] hover:bg-[#15803D] rounded-t-md transition-all cursor-pointer"
-                  />
-                  <span className="text-xs text-[#70706B] font-medium">{day}</span>
+            {(summary?.daily_stats || ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun'].map(d => ({ day: d, count: 0, pct: 0 }))).map((item) => (
+              <div key={item.day} className="flex-1 flex flex-col items-center gap-2 group/bar relative">
+                <div 
+                  style={{ height: `${item.pct > 0 ? item.pct : 4}%` }}
+                  className={`w-full rounded-t-md transition-all cursor-pointer ${
+                    item.pct > 0 
+                      ? 'bg-[#062E1A] hover:bg-[#15803D]' 
+                      : 'bg-[#ECECE8] hover:bg-[#E0E0DA]'
+                  }`}
+                />
+                <span className="text-xs text-[#70706B] font-medium">{item.day}</span>
+                <div className="absolute -top-7 opacity-0 group-hover/bar:opacity-100 transition-opacity bg-[#111110] text-white text-[10px] px-2 py-0.5 rounded shadow pointer-events-none whitespace-nowrap z-10">
+                  {item.count} {item.count === 1 ? 'msg' : 'msgs'}
                 </div>
-              );
-            })}
+              </div>
+            ))}
           </div>
         )}
       </div>

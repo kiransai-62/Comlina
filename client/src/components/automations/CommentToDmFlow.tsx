@@ -206,13 +206,11 @@ export function CommentToDmFlow({
   };
 
   // 4. Automated DM Message State
-  const [responseDm, setResponseDm] = useState(
-    "Hey! 👋 Here's the resource you requested:"
-  );
+  const [responseDm, setResponseDm] = useState('');
 
   // 5. DM Buttons State
-  const [buttonLabel, setButtonLabel] = useState('View the guide');
-  const [destinationUrl, setDestinationUrl] = useState('https://example.com/guide');
+  const [buttonLabel, setButtonLabel] = useState('Hey! 👋...');
+  const [destinationUrl, setDestinationUrl] = useState('');
 
   // 6. Advanced Settings State
   const [matchBehavior, setMatchBehavior] = useState<'exact' | 'contains'>('contains');
@@ -306,7 +304,7 @@ export function CommentToDmFlow({
 
   const handleSaveClick = async (status: 'DRAFT' | 'ACTIVE') => {
     if (!selectedAccount) {
-      showToast('Please connect an Instagram account first.');
+      showToast('Please connect an Instagram account.');
       return;
     }
 
@@ -371,12 +369,8 @@ export function CommentToDmFlow({
           <div>
             <div className="flex items-center gap-2.5">
               <h1 className="text-2xl sm:text-3xl font-extrabold text-[#111110] tracking-tight">
-                Comment to DM Flow
+                Comment to DM
               </h1>
-              <span className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-xs font-bold bg-[#FEF3C7] text-[#D97706] border border-[#FDE68A]/60">
-                <span className="w-1.5 h-1.5 rounded-full bg-[#D97706]" />
-                DRAFT
-              </span>
             </div>
             <p className="text-xs text-[#70706B] mt-1">
               Set up automated responses when users comment keywords on your Instagram posts.
@@ -427,7 +421,7 @@ export function CommentToDmFlow({
                 No Instagram Account Connected
               </div>
               <p className="text-xs text-[#B45309] mt-0.5">
-                Connect your Instagram Professional or Creator account to load real posts and run automations.
+                Connect your Instagram account to load posts and run automations.
               </p>
             </div>
           </div>
@@ -527,7 +521,7 @@ export function CommentToDmFlow({
               : 'text-[#70706B] hover:text-[#111110]'
           }`}
         >
-          ✏️ Configure Flow
+          Configure Flow
         </button>
         <button
           type="button"
@@ -538,7 +532,7 @@ export function CommentToDmFlow({
               : 'text-[#70706B] hover:text-[#111110]'
           }`}
         >
-          📱 Live Simulator
+          Live Preview
         </button>
       </div>
 

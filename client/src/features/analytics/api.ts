@@ -1,6 +1,15 @@
 // client/src/features/analytics/api.ts
 import { api } from '@/lib/api';
 
+export interface DailyStatItem {
+  day: string;
+  date: string;
+  dms: number;
+  comments: number;
+  count: number;
+  pct: number;
+}
+
 export interface AnalyticsSummary {
   workspace_id: string;
   total_automations: number;
@@ -13,8 +22,10 @@ export interface AnalyticsSummary {
   stats_clicks: number;
   delivery_health?: number | null;
   queue_latency?: number | null;
+  daily_stats?: DailyStatItem[];
 }
 
 export const analyticsApi = {
   getSummary: () => api.get<AnalyticsSummary>('/analytics/summary'),
 };
+
