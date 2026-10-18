@@ -1,0 +1,86 @@
+name: Security Audit & Dependency Scanning
+
+on:
+  push:
+    branches: [main, master, security-baseline]
+  pull_request:
+    branches: [main, master]
+  schedule:
+    # Run weekly on Monday at 04:00 UTC
+    - cron: '0 4 * * 1'
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  # 1. Gitleaks Secret Scanning
+  gitleaks:
+    name: Secret Scanning (Gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: true
+
+  # 2. Python Dependency Vulnerability Audit
+  pip-audit:
+    name: Python Dependency Audit (pip-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install pip-audit
+        run: pip install --upgrade pip pip-audit
+
+      - name: Audit Server Dependencies
+        run: pip-audit -r server/requirements.txt
+
+      - name: Audit Worker Dependencies
+        run: pip-audit -r worker/requirements.txt
+
+  # 3. Node.js Dependency Vulnerability Audit
+  npm-audit:
+    name: Node Dependency Audit (npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Audit Client Production Dependencies
+        run: npm --prefix client audit --omit=dev --audit-level=high
+
+  # 4. Trivy Vulnerability & Misconfiguration Scanner
+  trivy:
+    name: Filesystem & Config Scan (Trivy)
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Run Trivy vulnerability scanner in repo mode
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          scan-type: 'fs'
+          ignore-unfixed: true
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'

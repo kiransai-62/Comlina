@@ -1,0 +1,70 @@
+version: 2
+updates:
+  # 1. FastAPI Server Python Dependencies
+  - package-ecosystem: "pip"
+    directory: "/server"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps-server)"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "backend"
+
+  # 2. ARQ Worker Python Dependencies
+  - package-ecosystem: "pip"
+    directory: "/worker"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps-worker)"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "worker"
+
+  # 3. Next.js Client Node Dependencies
+  - package-ecosystem: "npm"
+    directory: "/client"
+    schedule:
+      interval: "weekly"
+    commit-message:
+      prefix: "chore(deps-client)"
+    open-pull-requests-limit: 10
+    labels:
+      - "dependencies"
+      - "frontend"
+
+  # 4. GitHub Actions Workflows
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(ci)"
+    labels:
+      - "dependencies"
+      - "ci"
+
+  # 5. Docker Containers (Root compose / Dockerfiles)
+  - package-ecosystem: "docker"
+    directory: "/"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(docker)"
+    labels:
+      - "dependencies"
+      - "docker"
+
+  # 6. Docker Containers (Infra Dockerfiles)
+  - package-ecosystem: "docker"
+    directory: "/infra/docker"
+    schedule:
+      interval: "monthly"
+    commit-message:
+      prefix: "chore(docker-infra)"
+    labels:
+      - "dependencies"
+      - "docker"
