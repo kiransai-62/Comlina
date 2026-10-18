@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from app.core.config import settings
 
+from app.core.logging import setup_logging
+
+setup_logging(force_json=(settings.ENVIRONMENT == "production"))
 logger = logging.getLogger("comlina_api")
 from app.core.database import init_db
 from app.core.security_middleware import (
@@ -27,7 +30,8 @@ from app.api.payments import router as payments_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Application startup: verify database tables
+    # Application startup: verify database tables and ensure logging setup
+    setup_logging(force_json=(settings.ENVIRONMENT == "production"))
     await init_db()
     yield
     # Application shutdown

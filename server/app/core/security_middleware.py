@@ -75,6 +75,11 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
+        client_ip = get_client_ip(request)
+        workspace_id = request.headers.get("x-workspace-id")
+
+        from app.core.logging import set_log_context, clear_log_context
+        set_log_context(request_id=request_id, client_ip=client_ip, workspace_id=workspace_id)
 
         try:
             response = await call_next(request)
@@ -91,6 +96,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
                     "request_id": request_id
                 }
             )
+        finally:
+            clear_log_context()
 
         response.headers["x-request-id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
