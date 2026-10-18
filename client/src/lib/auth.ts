@@ -132,18 +132,20 @@ class AuthService {
 
         if (resp.ok) {
           const data = await resp.json();
-          if (data.access_token) {
-            this._backendToken = data.access_token;
-            if (data.refresh_token) {
-              this._backendRefreshToken = data.refresh_token;
+          const accessToken = data.access_token || data.session?.access_token;
+          const newRefreshToken = data.refresh_token || data.session?.refresh_token;
+          if (accessToken) {
+            this._backendToken = accessToken;
+            if (newRefreshToken) {
+              this._backendRefreshToken = newRefreshToken;
             }
             if (typeof window !== 'undefined') {
-              localStorage.setItem('comlina_token', data.access_token);
-              if (data.refresh_token) {
-                localStorage.setItem('comlina_refresh_token', data.refresh_token);
+              localStorage.setItem('comlina_token', accessToken);
+              if (newRefreshToken) {
+                localStorage.setItem('comlina_refresh_token', newRefreshToken);
               }
             }
-            return data.access_token;
+            return accessToken;
           }
         }
       } catch (err) {
@@ -418,16 +420,19 @@ class AuthService {
       const data = await resp.json();
 
       // Persist access/refresh tokens if newly provided by session renewal
-      if (data.access_token) {
-        this._backendToken = data.access_token;
+      const accessToken = data.access_token || data.session?.access_token;
+      const refreshToken = data.refresh_token || data.session?.refresh_token;
+
+      if (accessToken) {
+        this._backendToken = accessToken;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('comlina_token', data.access_token);
+          localStorage.setItem('comlina_token', accessToken);
         }
       }
-      if (data.refresh_token) {
-        this._backendRefreshToken = data.refresh_token;
+      if (refreshToken) {
+        this._backendRefreshToken = refreshToken;
         if (typeof window !== 'undefined') {
-          localStorage.setItem('comlina_refresh_token', data.refresh_token);
+          localStorage.setItem('comlina_refresh_token', refreshToken);
         }
       }
 

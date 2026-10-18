@@ -286,29 +286,36 @@ async def list_instagram_media(
     if after:
         params["after"] = after
 
-    # Official Meta Graph API endpoint:
-    # On graph.facebook.com for page-linked IG account, use {ig_user_id}/media.
-    # On graph.instagram.com, me/media or {ig_user_id}/media.
-    endpoint = f"{account.ig_user_id}/media" if (token.startswith("EAA") and account.ig_user_id) else "me/media"
+    # Official Meta Instagram Graph API endpoint:
+    endpoint = "me/media"
 
     try:
         raw = await MetaGraphClient(token).get(endpoint, params=params)
     except MetaTokenExpiredError:
-        account.connection_status = "REAUTHORIZATION_REQUIRED"
-        account.last_error_code = "TOKEN_EXPIRED"
-        await db.commit()
-        raise HTTPException(status_code=409, detail="Instagram token expired or revoked. Please reconnect the account.")
+        # Before revoking credentials or setting REAUTHORIZATION_REQUIRED in DB,
+        # perform a lightweight sanity check with fetch_instagram_profile
+        # to ensure the token is truly dead, rather than an endpoint routing anomaly.
+        is_token_alive = False
+        try:
+            profile = await MetaOAuth.fetch_instagram_profile(token)
+            if profile.get("id") or profile.get("user_id"):
+                is_token_alive = True
+        except Exception:
+            is_token_alive = False
+
+        if not is_token_alive:
+            account.connection_status = "REAUTHORIZATION_REQUIRED"
+            account.last_error_code = "TOKEN_EXPIRED"
+            await db.commit()
+            raise HTTPException(status_code=409, detail="Instagram token expired or revoked. Please reconnect the account.")
+        else:
+            logger.warning("Media fetch returned code 190, but profile check verified token is active. Preserving connection status.")
+            raise HTTPException(status_code=502, detail="Instagram media service is temporarily unavailable. Please retry.")
     except MetaRateLimitError:
         raise HTTPException(status_code=429, detail="Instagram rate limit reached. Try again shortly.")
     except MetaGraphAPIError as e:
         logger.warning(f"Failed to fetch media from Meta endpoint {endpoint}: {e}")
-        if endpoint != "me/media":
-            try:
-                raw = await MetaGraphClient(token).get("me/media", params=params)
-            except Exception:
-                raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
-        else:
-            raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
 
     raw_items = raw.get("data", []) if isinstance(raw, dict) else []
     paging = raw.get("paging", {}) if isinstance(raw, dict) else {}
@@ -675,13 +682,13 @@ async def refresh_account_token(
 
     # 2. Check Meta 24-hour refresh rule:
     # Meta long-lived tokens cannot be refreshed if they are less than 24 hours old.
-    # If refreshed within 24h, return current account without error.
-    if getattr(account, "last_refreshed_at", None):
-        last_ref = account.last_refreshed_at
+    # If refreshed or connected within 24h, return current account without error.
+    last_ref = getattr(account, "last_refreshed_at", None) or getattr(account, "connected_at", None)
+    if last_ref:
         if last_ref.tzinfo is None:
             last_ref = last_ref.replace(tzinfo=timezone.utc)
         if now - last_ref < timedelta(hours=24):
-            logger.info(f"Account {account.id} token was refreshed less than 24h ago; skipping Meta API call.")
+            logger.info(f"Account {account.id} token was refreshed or connected less than 24h ago; skipping Meta API call.")
             account.last_validated_at = now
             await db.commit()
             await db.refresh(account)
@@ -704,7 +711,23 @@ async def refresh_account_token(
     except MetaOAuthError as e:
         err_msg = str(e)
         logger.warning(f"MetaOAuthError during token refresh for account {account.id}: {err_msg}")
-        if "190" in err_msg or "expired" in err_msg.lower() or "invalid" in err_msg.lower():
+        if "24 hours" in err_msg.lower():
+            account.last_refreshed_at = now
+            account.last_validated_at = now
+            await db.commit()
+            await db.refresh(account)
+            return account
+
+        # Verify whether token is truly dead before marking REAUTHORIZATION_REQUIRED
+        is_token_alive = False
+        try:
+            profile = await MetaOAuth.fetch_instagram_profile(current_token)
+            if profile.get("id") or profile.get("user_id"):
+                is_token_alive = True
+        except Exception:
+            is_token_alive = False
+
+        if not is_token_alive and ("190" in err_msg or "expired" in err_msg.lower() or "revoked" in err_msg.lower()):
             account.connection_status = "REAUTHORIZATION_REQUIRED"
             account.last_error_code = "TOKEN_REVOKED"
             await db.commit()
@@ -712,16 +735,15 @@ async def refresh_account_token(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Instagram session expired or revoked. Please reconnect: {err_msg}"
             )
-        elif "24 hours" in err_msg.lower():
-            account.last_refreshed_at = now
-            account.last_validated_at = now
-            await db.commit()
-            await db.refresh(account)
-            return account
         else:
             account.last_error_code = "REFRESH_FAILED"
+            if is_token_alive:
+                account.last_validated_at = now
             await db.commit()
-            raise HTTPException(status_code=400, detail=err_msg)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Instagram token refresh failed: {err_msg}"
+            )
 
     new_token = refreshed_data["access_token"]
     expires_in = refreshed_data.get("expires_in", 5184000)

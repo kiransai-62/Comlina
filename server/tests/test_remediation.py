@@ -23,15 +23,22 @@ class TestRemediation(unittest.IsolatedAsyncioTestCase):
         client = MetaGraphClient("IGQVJ...")
         self.assertTrue(client.base_url.startswith("https://graph.instagram.com/"))
 
-        # Facebook Page EAA token
-        fb_client = MetaGraphClient("EAAB...")
+        # Meta long-lived tokens from Instagram Login (often prefixed with EAA) must default to graph.instagram.com
+        eaa_client = MetaGraphClient("EAAB...")
+        self.assertTrue(eaa_client.base_url.startswith("https://graph.instagram.com/"))
+
+        # Explicit custom base_url is honored
+        fb_client = MetaGraphClient("EAAB...", base_url="https://graph.facebook.com/v21.0")
         self.assertTrue(fb_client.base_url.startswith("https://graph.facebook.com/"))
 
     def test_worker_meta_graph_client_base_url(self):
         client = WorkerMetaGraphClient("IGQVJ...")
         self.assertTrue(client.base_url.startswith("https://graph.instagram.com/"))
 
-        fb_client = WorkerMetaGraphClient("EAAB...")
+        eaa_client = WorkerMetaGraphClient("EAAB...")
+        self.assertTrue(eaa_client.base_url.startswith("https://graph.instagram.com/"))
+
+        fb_client = WorkerMetaGraphClient("EAAB...", base_url="https://graph.facebook.com/v21.0")
         self.assertTrue(fb_client.base_url.startswith("https://graph.facebook.com/"))
 
     def test_database_url_resolution(self):

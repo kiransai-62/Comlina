@@ -33,7 +33,12 @@ async def test_backend_auth_tokens_and_refresh():
         # 1. Use access token on protected endpoint /auth/me
         me_res = await ac.get("/api/auth/me", headers={"Authorization": f"Bearer {access_token}"})
         assert me_res.status_code == 200
-        assert me_res.json()["email"] == email
+        me_data = me_res.json()
+        assert me_data["email"] == email
+        assert "access_token" in me_data
+        assert "refresh_token" in me_data
+        assert "session" in me_data
+        assert me_data["session"]["access_token"] is not None
 
         # 2. Refresh token CANNOT be used as access token on protected endpoint
         bad_me = await ac.get("/api/auth/me", headers={"Authorization": f"Bearer {refresh_token}"})

@@ -24,7 +24,7 @@ def _is_service_reachable(url_str: str) -> bool:
         host = parsed.hostname or "localhost"
         port = parsed.port or 5432
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.3)
+        sock.settimeout(1.5)
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0

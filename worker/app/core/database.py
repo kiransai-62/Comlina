@@ -23,7 +23,7 @@ def _is_service_reachable(url_str: str) -> bool:
     try:
         parsed = urlparse(url_str.replace("postgresql+asyncpg://", "http://"))
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.3)
+        sock.settimeout(1.5)
         result = sock.connect_ex((parsed.hostname or "localhost", parsed.port or 5432))
         sock.close()
         return result == 0

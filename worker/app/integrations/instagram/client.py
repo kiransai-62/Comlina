@@ -21,12 +21,14 @@ class MetaGraphClient:
     Includes automated retries with exponential backoff for transient network issues
     and Meta rate limits (error codes 4, 17, 32, 613).
     """
-    def __init__(self, access_token: str):
+    def __init__(self, access_token: str, base_url: Optional[str] = None):
         self.access_token = access_token
         self.version = worker_settings.META_GRAPH_API_VERSION
-        if access_token and access_token.startswith("EAA"):
-            self.base_url = f"https://graph.facebook.com/{self.version}"
+        if base_url:
+            self.base_url = base_url.rstrip("/")
         else:
+            # Comlina uses Instagram Login for Business (instagram.com/oauth/authorize).
+            # Long-lived tokens (even when prefixed with EAA) must query graph.instagram.com.
             self.base_url = f"https://graph.instagram.com/{self.version}"
 
     async def _execute_with_retry(self, method: str, url: str, **kwargs) -> Dict[str, Any]:

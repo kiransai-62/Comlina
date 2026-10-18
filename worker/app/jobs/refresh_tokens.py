@@ -43,12 +43,12 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                         continue
 
                 # Check Meta 24-hour refresh rule
-                if getattr(account, "last_refreshed_at", None):
-                    last_ref = account.last_refreshed_at
+                last_ref = getattr(account, "last_refreshed_at", None) or getattr(account, "connected_at", None)
+                if last_ref:
                     if last_ref.tzinfo is None:
                         last_ref = last_ref.replace(tzinfo=timezone.utc)
                     if curr_now - last_ref < timedelta(hours=24):
-                        logger.info("Account %s token refreshed less than 24h ago; skipping.", account.id)
+                        logger.info("Account %s token refreshed or connected less than 24h ago; skipping.", account.id)
                         continue
 
                 try:
@@ -68,13 +68,31 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                     account.connection_status = "CONNECTED"
                     account.last_error_code = None
                     summary["refreshed"] += 1
-                elif (body.get("error") or {}).get("code") == 190 or "expired" in str(body).lower():
-                    account.connection_status = "REAUTHORIZATION_REQUIRED"
-                    account.last_error_code = "TOKEN_REVOKED"
-                    summary["deactivated"] += 1
                 elif "24 hours" in str(body).lower():
                     account.last_refreshed_at = curr_now
                     account.last_validated_at = curr_now
+                elif (body.get("error") or {}).get("code") == 190 or "expired" in str(body).lower():
+                    # Sanity check with profile fetch before revoking connection
+                    is_token_alive = False
+                    try:
+                        p_resp = await client.get(
+                            "https://graph.instagram.com/me",
+                            params={"access_token": token, "fields": "id,username"}
+                        )
+                        p_body = p_resp.json()
+                        if p_resp.status_code == 200 and (p_body.get("id") or p_body.get("username")):
+                            is_token_alive = True
+                    except Exception:
+                        is_token_alive = False
+
+                    if is_token_alive:
+                        logger.info("Token refresh returned code 190, but profile check verified token is active for %s. Not revoking.", account.id)
+                        account.last_validated_at = curr_now
+                        continue
+
+                    account.connection_status = "REAUTHORIZATION_REQUIRED"
+                    account.last_error_code = "TOKEN_REVOKED"
+                    summary["deactivated"] += 1
                 else:
                     account.last_error_code = "REFRESH_FAILED"
                     summary["failed"] += 1
