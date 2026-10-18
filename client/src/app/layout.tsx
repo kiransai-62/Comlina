@@ -23,6 +23,9 @@ export const metadata: Metadata = {
       { url: '/comlina-mark.png' },
     ],
   },
+  verification: {
+    google: 'DJx6lMlzEFDJRKWrWjf8mqxELGZeleEmPFcW4jXaavY',
+  },
   other: {
     'google-adsense-account': 'ca-pub-2835160283629906',
   },
