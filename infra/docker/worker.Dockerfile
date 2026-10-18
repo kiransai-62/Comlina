@@ -3,7 +3,7 @@
 # Asynchronous automation and comment processing
 # ==========================================
 
-FROM python:3.11-slim
+FROM python:3.11.9-slim-bookworm
 
 WORKDIR /app
 
@@ -25,6 +25,10 @@ USER appuser
 
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
+
+# Container healthcheck
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s --retries=3 \
+  CMD python -c "import sys; sys.exit(0)"
 
 # Run ARQ worker with WorkerSettings
 CMD ["arq", "app.main.WorkerSettings"]
