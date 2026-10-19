@@ -96,9 +96,9 @@ def test_redaction_filter_and_contextvars():
 
     filter_obj.filter(record)
 
-    assert record.request_id == "req-unit-123"
-    assert record.client_ip == "192.168.1.50"
-    assert record.workspace_id == "ws-uuid-789"
+    assert getattr(record, "request_id") == "req-unit-123"
+    assert getattr(record, "client_ip") == "192.168.1.50"
+    assert getattr(record, "workspace_id") == "ws-uuid-789"
     assert "secret_key_val" not in record.msg
     assert "[REDACTED]" in record.msg
 

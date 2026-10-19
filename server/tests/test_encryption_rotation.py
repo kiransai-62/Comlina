@@ -144,8 +144,9 @@ class TestReencryptTokensCLI:
 
             # Verify DB was NOT modified in dry-run mode
             async with AsyncSessionLocal() as db:
-                refreshed = (await db.get(InstagramAccount, acc_id))
-                assert refreshed.access_token_encrypted == old_ciphertext
+                refreshed = await db.get(InstagramAccount, acc_id)
+                assert refreshed is not None
+                assert str(refreshed.access_token_encrypted) == old_ciphertext
 
             # 2. Run in apply mode filtering by workspace_id
             res_apply = await reencrypt_all_tokens(dry_run=False, batch_size=50, workspace_id=ws.id)
@@ -153,10 +154,12 @@ class TestReencryptTokensCLI:
 
             # Verify DB WAS updated in apply mode and is decryptable by primary key
             async with AsyncSessionLocal() as db:
-                refreshed = (await db.get(InstagramAccount, acc_id))
-                assert refreshed.access_token_encrypted != old_ciphertext
+                refreshed = await db.get(InstagramAccount, acc_id)
+                assert refreshed is not None
+                encrypted_val = str(refreshed.access_token_encrypted)
+                assert encrypted_val != old_ciphertext
                 prim_fernet = Fernet(_normalize_key(primary_key))
-                assert prim_fernet.decrypt(refreshed.access_token_encrypted.encode("utf-8")) == b"token_to_reencrypt"
+                assert prim_fernet.decrypt(encrypted_val.encode("utf-8")) == b"token_to_reencrypt"
 
         finally:
             # Clean up test records

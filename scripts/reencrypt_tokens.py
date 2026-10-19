@@ -7,10 +7,12 @@ Supports dry-run verification mode, batch processing, and zero secret leakage.
 
 import os
 import sys
+import uuid
 import argparse
 import asyncio
 import logging
 from pathlib import Path
+from typing import Optional
 
 # Setup paths to import server modules
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -20,23 +22,31 @@ if str(SERVER_DIR) not in sys.path:
 
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select, update
-from app.core.config import settings
-from app.core.database import AsyncSessionLocal
-from app.models import InstagramAccount
-from app.core.encryption import (
-    _normalize_key,
-    decrypt_token,
-    rotate_token,
-)
+
+try:
+    from app.core.config import settings
+    from app.core.database import AsyncSessionLocal
+    from app.models import InstagramAccount
+    from app.core.encryption import (
+        _normalize_key,
+        decrypt_token,
+        rotate_token,
+    )
+except ImportError:
+    from server.app.core.config import settings  # type: ignore
+    from server.app.core.database import AsyncSessionLocal  # type: ignore
+    from server.app.models import InstagramAccount  # type: ignore
+    from server.app.core.encryption import (  # type: ignore
+        _normalize_key,
+        decrypt_token,
+        rotate_token,
+    )
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(message)s"
 )
 logger = logging.getLogger("reencrypt_tokens")
-
-
-from typing import Optional
 
 async def reencrypt_all_tokens(
     dry_run: bool = True,

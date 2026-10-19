@@ -98,7 +98,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
 
             # Defense-in-depth: Skip self-comment if commenter is the account itself
             commenter_id = event_data.get("sender_id")
-            if commenter_id and account and str(commenter_id) == str(account.ig_user_id):
+            if commenter_id and account and str(commenter_id) == account.ig_user_id:
                 logger.info(f"Skipping self-comment for account {account.id} (commenter_id == ig_user_id == {commenter_id})")
                 execution_summary["status"] = "SKIPPED_SELF_EVENT"
                 execution_summary["reason"] = "SELF_EVENT_SKIPPED"

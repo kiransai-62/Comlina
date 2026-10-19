@@ -119,7 +119,7 @@ async def send_dm_job(
                 return execution_summary
 
             # Defense-in-depth: Skip self-event if sender is the business account itself
-            if sender_id and account and str(sender_id) == str(account.ig_user_id):
+            if sender_id and account and sender_id == account.ig_user_id:
                 logger.info(f"Skipping self-event for account {account.id} (sender_id == ig_user_id == {sender_id})")
                 execution_summary["status"] = "SKIPPED_SELF_EVENT"
                 execution_summary["reason"] = "SELF_EVENT_SKIPPED"
