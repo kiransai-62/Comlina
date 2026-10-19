@@ -103,6 +103,15 @@ const nextConfig = {
       },
     ];
   },
+  async redirects() {
+    return [
+      {
+        source: '/data-deletion',
+        destination: '/data-deletion-status',
+        permanent: true,
+      },
+    ];
+  },
 };
 
 module.exports = nextConfig;
