@@ -13,7 +13,8 @@ from app.core.logging import (
     set_log_context,
     clear_log_context,
     get_log_context,
-    setup_logging
+    setup_logging,
+    log_diagnostic_event
 )
 from app.main import app
 
@@ -155,3 +156,71 @@ def test_request_lifecycle_context_propagation():
     ctx = get_log_context()
     assert ctx["request_id"] is None
     assert ctx["workspace_id"] is None
+
+
+def test_log_diagnostic_event_schema_and_zero_leakage():
+    details = {
+        "access_token": "EAABsb123456",
+        "secret": "topsecret",
+        "text": "Hello, this is a secret private direct message body",
+        "message": "private message content",
+        "body": "raw body with secret",
+        "provider_event_id": "wh_12345",
+        "flow_status": "COMPLETED"
+    }
+
+    entry = log_diagnostic_event(
+        stage="instagram_api_result",
+        correlation_id="corr-999",
+        event_type="COMMENT",
+        workspace_id="ws-abc",
+        account_id="acc-def",
+        http_status=200,
+        error_code=None,
+        details=details
+    )
+
+    assert entry["stage"] == "instagram_api_result"
+    assert entry["correlation_id"] == "corr-999"
+    assert entry["event_type"] == "COMMENT"
+    assert entry["workspace_id"] == "ws-abc"
+    assert entry["account_id"] == "acc-def"
+    assert entry["http_status"] == 200
+    assert entry["error_code"] is None
+
+    # Verify zero leakage of secrets and message bodies
+    safe_details = entry["details"]
+    assert "access_token" in safe_details
+    assert safe_details["access_token"] == "[REDACTED]"
+    assert "secret" in safe_details
+    assert safe_details["secret"] == "[REDACTED]"
+    assert "text" not in safe_details
+    assert "message" not in safe_details
+    assert "body" not in safe_details
+    assert safe_details["provider_event_id"] == "wh_12345"
+    assert safe_details["flow_status"] == "COMPLETED"
+
+
+@pytest.mark.asyncio
+async def test_meta_oauth_subscribe_app_to_account(monkeypatch):
+    import httpx
+    from app.integrations.instagram.oauth import MetaOAuth
+
+    async def mock_post(self, url, **kwargs):
+        assert "17841400000000/subscribed_apps" in str(url)
+        params = kwargs.get("params", {})
+        assert params.get("subscribed_fields") == "comments,messages"
+        assert params.get("access_token") == "test_access_token_123"
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.json.return_value = {"success": True}
+        return mock_resp
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", mock_post)
+
+    res = await MetaOAuth.subscribe_app_to_account(
+        access_token="test_access_token_123",
+        ig_user_id="17841400000000"
+    )
+    assert res.get("success") is True
+

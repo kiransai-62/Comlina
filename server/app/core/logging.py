@@ -201,3 +201,42 @@ def setup_logging(level: int = logging.INFO, force_json: bool = False) -> None:
             handler.addFilter(RedactionFilter())
         if force_json and not isinstance(handler.formatter, JsonFormatter):
             handler.setFormatter(JsonFormatter())
+
+
+diagnostic_logger = logging.getLogger("diagnostic")
+
+
+def log_diagnostic_event(
+    stage: str,
+    correlation_id: str,
+    event_type: str = "UNKNOWN",
+    workspace_id: Optional[str] = None,
+    account_id: Optional[str] = None,
+    http_status: Optional[int] = None,
+    error_code: Optional[str] = None,
+    details: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """
+    Emits a structured diagnostic log record according to the Comlina diagnostic logging contract.
+    Guarantees zero-leakage of access tokens, app secrets, signatures, or private message bodies.
+    """
+    safe_details = redact_data(details or {})
+    if isinstance(safe_details, dict):
+        safe_details.pop("text", None)
+        safe_details.pop("message", None)
+        safe_details.pop("raw", None)
+        safe_details.pop("body", None)
+
+    entry = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "stage": stage,
+        "correlation_id": correlation_id,
+        "event_type": event_type,
+        "workspace_id": str(workspace_id) if workspace_id else None,
+        "account_id": str(account_id) if account_id else None,
+        "http_status": http_status,
+        "error_code": error_code,
+        "details": safe_details,
+    }
+    diagnostic_logger.info(json.dumps(entry, default=str))
+    return entry

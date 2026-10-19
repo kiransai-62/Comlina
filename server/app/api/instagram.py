@@ -649,6 +649,13 @@ async def handle_oauth_callback(
 
     await db.commit()
     await db.refresh(account)
+
+    # Automatically install/subscribe webhook delivery on Meta for this Instagram account
+    try:
+        await MetaOAuth.subscribe_app_to_account(access_token, ig_user_id)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {ig_user_id}: {ex}")
+
     return account
 
 if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ROUTES:
@@ -830,6 +837,12 @@ async def refresh_account_token(
 
     await db.commit()
     await db.refresh(account)
+
+    try:
+        await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
+
     return account
 
 @router.post("/accounts/{account_id}/sync", response_model=InstagramAccountOut)
@@ -892,6 +905,12 @@ async def sync_instagram_account_profile(
 
     await db.commit()
     await db.refresh(account)
+
+    try:
+        await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
+
     return account
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)

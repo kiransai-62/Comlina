@@ -104,4 +104,26 @@ class MetaOAuth:
             raise MetaOAuthError("Instagram returned no account id.")
         return body
 
+    @staticmethod
+    async def subscribe_app_to_account(access_token: str, ig_user_id: str) -> Dict[str, Any]:
+        """
+        Subscribes the Meta app to receive real-time webhooks (comments, messages) for the Instagram account.
+        Calls POST https://graph.instagram.com/{META_GRAPH_API_VERSION}/{ig_user_id}/subscribed_apps
+        with subscribed_fields=comments,messages.
+        """
+        url = f"{IG_GRAPH}/{settings.META_GRAPH_API_VERSION}/{ig_user_id}/subscribed_apps"
+        params = {
+            "subscribed_fields": "comments,messages",
+            "access_token": access_token,
+        }
+        try:
+            async with httpx.AsyncClient(timeout=15.0) as client:
+                resp = await client.post(url, params=params)
+                body = resp.json()
+                logger.info(f"[OAUTH] Subscribed app to account {ig_user_id}: status={resp.status_code} body={body}")
+                return body
+        except Exception as e:
+            logger.warning(f"[OAUTH] Failed to subscribe app to account {ig_user_id}: {e}")
+            return {"success": False, "error": str(e)}
+
     fetch_profile = fetch_instagram_profile

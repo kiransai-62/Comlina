@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
+from app.core.logging import log_diagnostic_event
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.messaging import InstagramMessaging
@@ -115,6 +116,13 @@ async def send_dm_job(
                 logger.warning(f"No active InstagramAccount found for recipient_id={recipient_id}")
                 execution_summary["status"] = "IGNORED"
                 execution_summary["reason"] = "ACCOUNT_NOT_FOUND"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    error_code="ACCOUNT_NOT_FOUND",
+                    details={"status": "IGNORED", "reason": "ACCOUNT_NOT_FOUND"}
+                )
                 await _update_webhook_event(session, event_id, provider_event_id, "IGNORED", "Instagram account not found")
                 return execution_summary
 
@@ -123,6 +131,14 @@ async def send_dm_job(
                 logger.info(f"Skipping self-event for account {account.id} (sender_id == ig_user_id == {sender_id})")
                 execution_summary["status"] = "SKIPPED_SELF_EVENT"
                 execution_summary["reason"] = "SELF_EVENT_SKIPPED"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    details={"status": "SKIPPED_SELF_EVENT"}
+                )
                 await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED", "Self-event skipped")
                 return execution_summary
 
@@ -358,13 +374,43 @@ async def send_dm_job(
                     instagram_client=meta_client,
                     db_session=session
                 )
-                if res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED"):
+                is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
+                if is_matched:
                     execution_summary["automations_matched"] += 1
                     execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
                     action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
 
+                log_diagnostic_event(
+                    stage="automation_matched",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    error_code=None if is_matched else "TRIGGER_MISMATCH",
+                    details={
+                        "automation_id": str(auto.id),
+                        "matched": is_matched,
+                        "trigger_type": auto.trigger_type,
+                        "flow_status": res.get("status")
+                    }
+                )
+
+                if is_matched:
                     for act_res in action_results:
+                        log_diagnostic_event(
+                            stage="instagram_api_result",
+                            correlation_id=provider_event_id or event_id,
+                            event_type="MESSAGING",
+                            workspace_id=str(account.workspace_id),
+                            account_id=str(account.id),
+                            http_status=200 if act_res.get("status") == "SUCCESS" else 400,
+                            error_code=None if act_res.get("status") == "SUCCESS" else str(act_res.get("error", "API_ERROR")),
+                            details={
+                                "action": act_res.get("action"),
+                                "status": act_res.get("status"),
+                            }
+                        )
                         if act_res.get("status") == "SUCCESS":
                             if act_res.get("action") == "PRIVATE_DM":
                                 auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
@@ -397,6 +443,19 @@ async def send_dm_job(
 
             # 7. Update WebhookEvent to PROCESSED
             await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+            log_diagnostic_event(
+                stage="job_processed",
+                correlation_id=provider_event_id or event_id,
+                event_type="MESSAGING",
+                workspace_id=str(account.workspace_id),
+                account_id=str(account.id),
+                http_status=200,
+                details={
+                    "status": execution_summary["status"],
+                    "automations_matched": execution_summary["automations_matched"],
+                    "actions_executed": execution_summary["actions_executed"]
+                }
+            )
             await session.commit()
             return execution_summary
 
@@ -404,5 +463,16 @@ async def send_dm_job(
             logger.error(f"Error in send_dm_job: {e}", exc_info=True)
             execution_summary["status"] = "FAILED"
             execution_summary["error"] = str(e)
+            log_diagnostic_event(
+                stage="job_processed",
+                correlation_id=event_data.get("provider_event_id") or event_id,
+                event_type="MESSAGING",
+                http_status=500,
+                error_code="JOB_FAILED",
+                details={
+                    "status": "FAILED",
+                    "error": str(e)[:200]
+                }
+            )
             await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "FAILED", str(e))
             return execution_summary
