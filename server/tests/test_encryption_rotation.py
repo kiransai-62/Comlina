@@ -146,7 +146,7 @@ class TestReencryptTokensCLI:
             async with AsyncSessionLocal() as db:
                 refreshed = await db.get(InstagramAccount, acc_id)
                 assert refreshed is not None
-                assert str(refreshed.access_token_encrypted) == old_ciphertext
+                assert refreshed.access_token_encrypted == old_ciphertext
 
             # 2. Run in apply mode filtering by workspace_id
             res_apply = await reencrypt_all_tokens(dry_run=False, batch_size=50, workspace_id=ws.id)
@@ -156,7 +156,7 @@ class TestReencryptTokensCLI:
             async with AsyncSessionLocal() as db:
                 refreshed = await db.get(InstagramAccount, acc_id)
                 assert refreshed is not None
-                encrypted_val = str(refreshed.access_token_encrypted)
+                encrypted_val = refreshed.access_token_encrypted
                 assert encrypted_val != old_ciphertext
                 prim_fernet = Fernet(_normalize_key(primary_key))
                 assert prim_fernet.decrypt(encrypted_val.encode("utf-8")) == b"token_to_reencrypt"

@@ -23,24 +23,14 @@ if str(SERVER_DIR) not in sys.path:
 from cryptography.fernet import Fernet, InvalidToken
 from sqlalchemy import select, update
 
-try:
-    from app.core.config import settings
-    from app.core.database import AsyncSessionLocal
-    from app.models import InstagramAccount
-    from app.core.encryption import (
-        _normalize_key,
-        decrypt_token,
-        rotate_token,
-    )
-except ImportError:
-    from server.app.core.config import settings  # type: ignore
-    from server.app.core.database import AsyncSessionLocal  # type: ignore
-    from server.app.models import InstagramAccount  # type: ignore
-    from server.app.core.encryption import (  # type: ignore
-        _normalize_key,
-        decrypt_token,
-        rotate_token,
-    )
+from app.core.config import settings  # type: ignore
+from app.core.database import AsyncSessionLocal  # type: ignore
+from app.models import InstagramAccount  # type: ignore
+from app.core.encryption import (  # type: ignore
+    _normalize_key,
+    decrypt_token,
+    rotate_token,
+)
 
 logging.basicConfig(
     level=logging.INFO,
