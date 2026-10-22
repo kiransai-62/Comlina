@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from app.core.config import Settings
 from app.api.instagram import router as instagram_router
 from app.api.payments import router as payments_router
+from app.api.webhooks import router as webhooks_router
 from app.main import app
 
 def test_production_routes_disabled(monkeypatch):
@@ -13,6 +14,7 @@ def test_production_routes_disabled(monkeypatch):
     - /docs, /redoc, /openapi.json must return 404.
     - /api/instagram/connect-dev-account must return 404.
     - /api/payments/dev/switch-plan must return 404.
+    - /webhooks/instagram/simulate-comment must return 404.
     """
     # Create production app instance
     prod_settings = Settings(
@@ -27,6 +29,9 @@ def test_production_routes_disabled(monkeypatch):
         META_APP_SECRET="meta_app_secret_real_prod_entropy_32chars",
         META_WEBHOOK_VERIFY_TOKEN="meta_webhook_token_secure_and_long_32chars",
         ALLOWED_ORIGINS="https://app.comlina.ai,https://comlina.ai",
+        RAZORPAY_KEY_ID="rzp_live_1234567890abcdef",
+        RAZORPAY_KEY_SECRET="razorpay_secret_real_prod_entropy_32chars",
+        RAZORPAY_WEBHOOK_SECRET="razorpay_webhook_real_prod_entropy_32chars",
     )
 
     prod_app = FastAPI(
@@ -38,6 +43,8 @@ def test_production_routes_disabled(monkeypatch):
     )
     prod_app.include_router(instagram_router, prefix="/api")
     prod_app.include_router(payments_router, prefix="/api")
+    prod_app.include_router(webhooks_router)
+    prod_app.include_router(webhooks_router, prefix="/api")
 
     client = TestClient(prod_app)
 
@@ -50,8 +57,12 @@ def test_production_routes_disabled(monkeypatch):
     assert client.post("/api/instagram/connect-dev-account").status_code == 404
     assert client.post("/api/payments/dev/switch-plan").status_code == 404
 
+    # Simulation route disabled in production
+    assert client.post("/webhooks/instagram/simulate-comment", json={"text": "test"}).status_code == 404
+    assert client.post("/api/webhooks/instagram/simulate-comment", json={"text": "test"}).status_code == 404
+
 def test_dev_routes_not_registered_when_flag_false():
-    """When ENABLE_DEV_ROUTES is False (default), dev account routes must return 404."""
+    """When ENABLE_DEV_ROUTES is False (default), dev account routes and simulation must return 404."""
     client = TestClient(app)
     # If default server started with ENABLE_DEV_ROUTES=False:
     # connect-dev-account should return 404
@@ -60,3 +71,6 @@ def test_dev_routes_not_registered_when_flag_false():
 
     res2 = client.post("/api/payments/dev/switch-plan")
     assert res2.status_code == 404
+
+    res3 = client.post("/webhooks/instagram/simulate-comment", json={"text": "test"})
+    assert res3.status_code == 404

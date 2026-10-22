@@ -27,6 +27,11 @@ test('Client Middleware - Enforces CSP with per-request nonces', () => {
   assert.match(content, /Referrer-Policy', 'strict-origin-when-cross-origin'/, 'Must set Referrer-Policy: strict-origin-when-cross-origin');
   assert.match(content, /Permissions-Policy'/, 'Must set Permissions-Policy');
   assert.match(content, /Strict-Transport-Security'/, 'Must set Strict-Transport-Security');
+
+  // Verify safe logging on injection detection (no raw query string leakage)
+  assert.doesNotMatch(content, /console\.warn\(.*Query=\$\{search\}/, 'Must not log raw query string');
+  assert.match(content, /console\.warn\(.*Rule=\$\{rule\.name\}/, 'Must log matched rule name');
+  assert.match(content, /console\.warn\(.*Path=\$\{sanitizedPath\}/, 'Must log sanitized path');
 });
 
 test('Client Error Boundaries - Generic error and global-error components exist', () => {

@@ -32,9 +32,18 @@ async def test_worker_follower_service_statuses():
     assert status == FollowerStatus.CHECK_UNAVAILABLE
 
     # CHECK_UNAVAILABLE on Graph error (messaging consent required)
-    client_mock.get.side_effect = MetaGraphAPIError("Messaging consent required", code=100)
-    status, _ = await service.check_follower_status("b1", "u5")
+    client_mock.get.side_effect = MetaGraphAPIError("Messaging consent required with token=EAAB_worker_secret", code=100)
+    status, reason = await service.check_follower_status("b1", "u5")
     assert status == FollowerStatus.CHECK_UNAVAILABLE
+    assert "EAAB_worker_secret" not in reason
+    assert "code=100" in reason
+
+    # Unexpected exception does not leak message
+    client_mock.get.side_effect = RuntimeError("Internal connection failure pass=my_worker_pass")
+    status_err, reason_err = await service.check_follower_status("b1", "u5")
+    assert status_err == FollowerStatus.CHECK_UNAVAILABLE
+    assert "my_worker_pass" not in reason_err
+    assert reason_err == "Unexpected error checking follower status"
 
     # UNKNOWN on missing IDs
     status, _ = await service.check_follower_status("", "u6")

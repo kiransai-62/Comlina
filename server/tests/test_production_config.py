@@ -1,6 +1,7 @@
 import os
 import base64
 import pytest
+from typing import Dict, Any
 from app.core.config import (
     Settings,
     DEV_DETERMINISTIC_FERNET_KEY,
@@ -13,7 +14,7 @@ from worker.app.core.database import resolve_database_url as worker_resolve_db
 VALID_FERNET_KEY = base64.urlsafe_b64encode(b"12345678901234567890123456789012").decode("utf-8")
 VALID_FERNET_KEY_2 = base64.urlsafe_b64encode(b"abcdefghijklmnopqrstuvwxyz123456").decode("utf-8")
 
-def get_base_valid_prod_kwargs():
+def get_base_valid_prod_kwargs() -> Dict[str, Any]:
     return {
         "ENVIRONMENT": "production",
         "DATABASE_URL": "postgresql+asyncpg://prod_user:secret_pg_pass@prod-db.internal:5432/comlina_prod",
@@ -28,6 +29,9 @@ def get_base_valid_prod_kwargs():
         "META_APP_SECRET": "meta_app_secret_real_prod_entropy_32chars",
         "META_WEBHOOK_VERIFY_TOKEN": "meta_webhook_token_secure_and_long_32chars",
         "ALLOWED_ORIGINS": "https://app.comlina.ai,https://comlina.ai",
+        "RAZORPAY_KEY_ID": "rzp_live_1234567890abcdef",
+        "RAZORPAY_KEY_SECRET": "razorpay_secret_real_prod_entropy_32chars",
+        "RAZORPAY_WEBHOOK_SECRET": "razorpay_webhook_real_prod_entropy_32chars",
     }
 
 def test_valid_production_config_passes():
@@ -156,6 +160,37 @@ def test_prod_fails_on_insecure_cors_origins():
     kwargs["ALLOWED_ORIGINS"] = ""
     kwargs["CORS_ORIGINS"] = []
     with pytest.raises(ValueError, match="ALLOWED_ORIGINS"):
+        Settings(**kwargs)
+
+def test_prod_fails_on_missing_or_placeholder_razorpay():
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_KEY_ID"] = ""
+    with pytest.raises(ValueError, match="RAZORPAY_KEY_ID"):
+        Settings(**kwargs)
+
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_KEY_ID"] = "rzp_test_comlina2026"
+    with pytest.raises(ValueError, match="RAZORPAY_KEY_ID"):
+        Settings(**kwargs)
+
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_KEY_SECRET"] = ""
+    with pytest.raises(ValueError, match="RAZORPAY_KEY_SECRET"):
+        Settings(**kwargs)
+
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_KEY_SECRET"] = "dev_secret_razorpay_comlina_2026"
+    with pytest.raises(ValueError, match="RAZORPAY_KEY_SECRET"):
+        Settings(**kwargs)
+
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_WEBHOOK_SECRET"] = ""
+    with pytest.raises(ValueError, match="RAZORPAY_WEBHOOK_SECRET"):
+        Settings(**kwargs)
+
+    kwargs = get_base_valid_prod_kwargs()
+    kwargs["RAZORPAY_WEBHOOK_SECRET"] = "dev_webhook_secret_comlina_2026"
+    with pytest.raises(ValueError, match="RAZORPAY_WEBHOOK_SECRET"):
         Settings(**kwargs)
 
 def test_worker_settings_validation():

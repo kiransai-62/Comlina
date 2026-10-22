@@ -111,9 +111,9 @@ class Settings(BaseSettings):
     TOKEN_ENCRYPTION_KEYS: str = os.getenv("TOKEN_ENCRYPTION_KEYS", "")
 
     # Razorpay Payments & Subscriptions
-    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "rzp_test_comlina2026")
-    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "dev_secret_razorpay_comlina_2026")
-    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "dev_webhook_secret_comlina_2026")
+    RAZORPAY_KEY_ID: str = os.getenv("RAZORPAY_KEY_ID", "")
+    RAZORPAY_KEY_SECRET: str = os.getenv("RAZORPAY_KEY_SECRET", "")
+    RAZORPAY_WEBHOOK_SECRET: str = os.getenv("RAZORPAY_WEBHOOK_SECRET", "")
 
     # Proxy trust & dev settings
     TRUSTED_PROXY_COUNT: int = int(os.getenv("TRUSTED_PROXY_COUNT", "0"))
@@ -216,6 +216,12 @@ class Settings(BaseSettings):
                 self.BACKEND_JWT_SECRET = self.SUPABASE_JWT_SECRET
             if not self.TOKEN_ENCRYPTION_KEY and not self.TOKEN_ENCRYPTION_KEYS:
                 self.TOKEN_ENCRYPTION_KEY = DEV_DETERMINISTIC_FERNET_KEY
+            if not self.RAZORPAY_KEY_ID:
+                self.RAZORPAY_KEY_ID = "rzp_test_comlina2026"
+            if not self.RAZORPAY_KEY_SECRET:
+                self.RAZORPAY_KEY_SECRET = "dev_secret_razorpay_comlina_2026"
+            if not self.RAZORPAY_WEBHOOK_SECRET:
+                self.RAZORPAY_WEBHOOK_SECRET = "dev_webhook_secret_comlina_2026"
         elif self.ENVIRONMENT == "production":
             if not self.BACKEND_JWT_SECRET:
                 self.BACKEND_JWT_SECRET = self.SUPABASE_JWT_SECRET
@@ -302,6 +308,14 @@ class Settings(BaseSettings):
         for origin in origins:
             if not origin.startswith("https://"):
                 raise ValueError(f"Production error: Insecure HTTP origin '{origin}' forbidden in production; HTTPS required")
+
+        # 10. Razorpay Payments Configuration
+        if not self.RAZORPAY_KEY_ID or is_placeholder(self.RAZORPAY_KEY_ID) or self.RAZORPAY_KEY_ID == "rzp_test_comlina2026":
+            raise ValueError("Production error: RAZORPAY_KEY_ID must be set to a valid production key in production")
+        if not self.RAZORPAY_KEY_SECRET or is_placeholder(self.RAZORPAY_KEY_SECRET) or self.RAZORPAY_KEY_SECRET == "dev_secret_razorpay_comlina_2026":
+            raise ValueError("Production error: RAZORPAY_KEY_SECRET must be set to a valid secret in production")
+        if not self.RAZORPAY_WEBHOOK_SECRET or is_placeholder(self.RAZORPAY_WEBHOOK_SECRET) or self.RAZORPAY_WEBHOOK_SECRET == "dev_webhook_secret_comlina_2026":
+            raise ValueError("Production error: RAZORPAY_WEBHOOK_SECRET must be set to a valid webhook secret in production")
 
 settings = Settings()
 

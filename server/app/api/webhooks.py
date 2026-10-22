@@ -133,7 +133,14 @@ async def simulate_comment(
 ):
     """
     Simulator endpoint to verify Comment -> Keyword Check -> DM -> Contact/Inbox/Analytics loop in one call.
+    Disabled in production and requires ENABLE_DEV_ROUTES in development.
     """
+    if settings.ENVIRONMENT == "production" or not settings.ENABLE_DEV_ROUTES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation endpoint is disabled in production and requires ENABLE_DEV_ROUTES."
+        )
+
     account = None
     if req.account_id:
         try:

@@ -173,7 +173,8 @@ async def test_messaging_webhook_send_dm_job_pipeline():
         assert contact_msg is not None
         assert contact_msg.text == "Hello, I accepted your request!"
 
-def test_simulate_comment_endpoint():
+def test_simulate_comment_endpoint(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", True)
     client = TestClient(app)
     # Post to simulate-comment
     payload = {

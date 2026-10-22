@@ -57,8 +57,9 @@ class InstagramFollowerService:
             return FollowerStatus.CHECK_UNAVAILABLE, "Meta Rate Limit Exceeded"
         except MetaGraphAPIError as e:
             # Missing messaging consent (comment-only user) or permission not granted
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Graph API Error (messaging consent required): {str(e)}"
-        except Exception as e:
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Unexpected error checking follower status: {str(e)}"
+            detail = f"code={e.code}" if getattr(e, "code", None) is not None else "permission/consent required"
+            return FollowerStatus.CHECK_UNAVAILABLE, f"Graph API Error (messaging consent required): {detail}"
+        except Exception:
+            return FollowerStatus.CHECK_UNAVAILABLE, "Unexpected error checking follower status"
 
 

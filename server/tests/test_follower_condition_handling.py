@@ -113,6 +113,29 @@ async def test_follower_service_unexpected_exception():
     status, reason = await service.check_follower_status("biz_1", "user_7")
     assert status == FollowerStatus.CHECK_UNAVAILABLE
     assert "Unexpected error" in reason
+    assert "Network socket dropped" not in reason
+
+
+@pytest.mark.asyncio
+async def test_follower_service_does_not_leak_raw_exception_or_token():
+    client_mock = AsyncMock()
+    client_mock.get.side_effect = MetaGraphAPIError(
+        message="Sensitive failure at https://graph.facebook.com?access_token=EAAB12345",
+        code=100
+    )
+    service = InstagramFollowerService(client_mock)
+    status, reason = await service.check_follower_status("biz_1", "user_sensitive")
+    assert status == FollowerStatus.CHECK_UNAVAILABLE
+    assert "EAAB12345" not in reason
+    assert "https://" not in reason
+    assert "access_token" not in reason
+    assert "code=100" in reason
+
+    client_mock.get.side_effect = RuntimeError("Fatal DB string with password=my_db_pass")
+    status_unexp, reason_unexp = await service.check_follower_status("biz_1", "user_sensitive")
+    assert status_unexp == FollowerStatus.CHECK_UNAVAILABLE
+    assert "my_db_pass" not in reason_unexp
+    assert reason_unexp == "Unexpected error checking follower status"
 
 
 @pytest.mark.asyncio

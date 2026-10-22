@@ -77,13 +77,18 @@ const BLOCKED_USER_AGENTS = [
 ];
 
 // Detect path traversal and dangerous injection keywords in query string
-const INJECTION_PATTERNS = [
-  /(\.\.[\/\\]|%2e%2e[\/\\])/i, // Path traversal ../ or ..\
-  /<script\b[^>]*>/i, // Cross-site scripting tags
-  /\b(javascript:|vbscript:|data:text\/html)/i, // Malicious protocol schemes
-  /(union(\s+|%20|\+)(all(\s+|%20|\+))?select|select(\s+|%20|\+).+(\s+|%20|\+)from|insert(\s+|%20|\+)into|waitfor(\s+|%20|\+)delay|benchmark\s*\(|drop(\s+|%20|\+)table)/i, // SQL injection
-  /\b(eval|alert|prompt|confirm)\s*\(/i, // Obvious JS execution payloads in query
-  /%00/i, // Null-byte poisoning
+interface InjectionRule {
+  name: string;
+  pattern: RegExp;
+}
+
+const INJECTION_RULES: InjectionRule[] = [
+  { name: 'path_traversal', pattern: /(\.\.[\/\\]|%2e%2e[\/\\])/i }, // Path traversal ../ or ..\
+  { name: 'xss_tag', pattern: /<script\b[^>]*>/i }, // Cross-site scripting tags
+  { name: 'malicious_protocol', pattern: /\b(javascript:|vbscript:|data:text\/html)/i }, // Malicious protocol schemes
+  { name: 'sql_injection', pattern: /(union(\s+|%20|\+)(all(\s+|%20|\+))?select|select(\s+|%20|\+).+(\s+|%20|\+)from|insert(\s+|%20|\+)into|waitfor(\s+|%20|\+)delay|benchmark\s*\(|drop(\s+|%20|\+)table)/i }, // SQL injection
+  { name: 'js_execution', pattern: /\b(eval|alert|prompt|confirm)\s*\(/i }, // Obvious JS execution payloads in query
+  { name: 'null_byte', pattern: /%00/i }, // Null-byte poisoning
 ];
 
 // ============================================================================
@@ -177,10 +182,12 @@ export function middleware(request: NextRequest) {
     }
     const queryCandidates = [search, decodedQuery, search.replace(/%20/g, ' ')];
 
-    for (const injectionPattern of INJECTION_PATTERNS) {
-      const isMatched = queryCandidates.some((candidate) => injectionPattern.test(candidate));
+    for (const rule of INJECTION_RULES) {
+      const isMatched = queryCandidates.some((candidate) => rule.pattern.test(candidate));
       if (isMatched) {
-        console.warn(`[SECURITY BLOCKED: INJECTION_ATTEMPT] IP=${clientIp} Query=${search} RequestId=${requestId}`);
+        // Sanitize path and log rule name without ever leaking raw query strings or tokens
+        const sanitizedPath = encodeURI(pathname);
+        console.warn(`[SECURITY BLOCKED: INJECTION_ATTEMPT] IP=${clientIp} Path=${sanitizedPath} Rule=${rule.name} RequestId=${requestId}`);
         return new NextResponse(
           JSON.stringify({
             error: 'Bad Request',
