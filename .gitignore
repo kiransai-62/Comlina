@@ -20,12 +20,14 @@ client/tsconfig.tsbuildinfo
 # Environment & Secrets
 .env*
 !.env.example
+!.env.production.example
 !client/.env.example
 session*.json
 scripts/session*.json
 *.pem
 *.key
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 
