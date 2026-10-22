@@ -33,6 +33,7 @@ interface CommentToLeadFlowProps {
   accountName?: string;
   isSaving?: boolean;
   onPreviewChange?: (previewData: any) => void;
+  initialData?: any;
 }
 
 export function CommentToLeadFlow({
@@ -41,12 +42,15 @@ export function CommentToLeadFlow({
   accountName = 'yourbrand',
   isSaving = false,
   onPreviewChange,
+  initialData,
 }: CommentToLeadFlowProps) {
   // 1. Flow Name
-  const [flowName, setFlowName] = useState('');
+  const [flowName, setFlowName] = useState(initialData?.flowName || initialData?.name || '');
 
   // 2. Post Selection State
-  const [selectedPostId, setSelectedPostId] = useState<string>('all');
+  const [selectedPostId, setSelectedPostId] = useState<string>(
+    initialData?.selectedPostId || initialData?.trigger?.selectedPostId || 'all'
+  );
   const [posts, setPosts] = useState<NormalizedInstagramMedia[]>([]);
   const [isLoadingPosts, setIsLoadingPosts] = useState(false);
   const postScrollRef = useRef<HTMLDivElement>(null);
@@ -68,35 +72,63 @@ export function CommentToLeadFlow({
   }, []);
 
   // 3. Trigger State
-  const [replyToAll, setReplyToAll] = useState(false);
-  const [triggerKeyword, setTriggerKeyword] = useState('');
+  const [replyToAll, setReplyToAll] = useState(
+    initialData?.replyToAll ?? initialData?.trigger?.replyToAll ?? false
+  );
+  const [triggerKeyword, setTriggerKeyword] = useState(
+    initialData?.triggerKeyword ?? initialData?.trigger?.keyword ?? ''
+  );
 
   // 4. Welcome DM Message
   const [welcomeMessage, setWelcomeMessage] = useState(
+    initialData?.welcomeMessage ||
     "Hey! 👋 Thanks for your interest! I'd love to get to know you better. I'll ask you a few quick questions! 😊"
   );
 
   // 5. Questions State
-  const [questions, setQuestions] = useState<string[]>([
-    'What is your name?',
-    'What is your email address?',
-  ]);
+  const [questions, setQuestions] = useState<string[]>(
+    initialData?.questions || [
+      'What is your name?',
+      'What is your email address?',
+    ]
+  );
 
   // 6. Completion Message
   const [completionMessage, setCompletionMessage] = useState(
+    initialData?.completionMessage ||
     "Thanks so much! 🙏 We'll be in touch soon! 💌"
   );
 
   // 7. Unfinished Form Follow-ups State
-  const [unfinishedFollowUpEnabled, setUnfinishedFollowUpEnabled] = useState(true);
-  const [reminders, setReminders] = useState<ReminderItem[]>([
-    {
-      id: 'rem_1',
-      message: 'Hi {name}, you haven\'t filled your form fully — do you want to continue it?',
-      delay: 1,
-      unit: 'hours',
-    },
-  ]);
+  const [unfinishedFollowUpEnabled, setUnfinishedFollowUpEnabled] = useState(
+    initialData?.unfinishedFollowUp?.enabled ?? true
+  );
+  const [reminders, setReminders] = useState<ReminderItem[]>(
+    initialData?.unfinishedFollowUp?.reminders || [
+      {
+        id: 'rem_1',
+        message: 'Hi {name}, you haven\'t filled your form fully — do you want to continue it?',
+        delay: 1,
+        unit: 'hours',
+      },
+    ]
+  );
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.flowName || initialData.name) setFlowName(initialData.flowName || initialData.name);
+      if (initialData.selectedPostId || initialData.trigger?.selectedPostId) {
+        setSelectedPostId(initialData.selectedPostId || initialData.trigger?.selectedPostId);
+      }
+      if (initialData.replyToAll !== undefined) setReplyToAll(initialData.replyToAll);
+      if (initialData.triggerKeyword || initialData.trigger?.keyword) {
+        setTriggerKeyword(initialData.triggerKeyword || initialData.trigger.keyword);
+      }
+      if (initialData.welcomeMessage) setWelcomeMessage(initialData.welcomeMessage);
+      if (initialData.questions) setQuestions(initialData.questions);
+      if (initialData.completionMessage) setCompletionMessage(initialData.completionMessage);
+    }
+  }, [initialData]);
 
   // Synchronize Live Preview Setup
   React.useEffect(() => {

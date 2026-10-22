@@ -26,6 +26,7 @@ import { useAutomations } from '@/features/automations/hooks';
 import { AutomationItem } from '@/features/automations/types';
 import { InstagramPhonePreview } from '@/components/automations/InstagramPhonePreview';
 import { authService } from '@/lib/auth';
+import { useUIStore } from '@/stores/uiStore';
 
 export default function AutomationsPage() {
   const [search, setSearch] = useState('');
@@ -33,7 +34,18 @@ export default function AutomationsPage() {
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [previewItem, setPreviewItem] = useState<AutomationItem | null>(null);
 
-  const { automations: initialAutomations, isLoading, isError, error, refetch, deleteAutomation } = useAutomations();
+  const showToast = useUIStore((s) => s.showToast);
+  const [pendingToggleIds, setPendingToggleIds] = useState<Record<string, boolean>>({});
+
+  const {
+    automations: initialAutomations,
+    isLoading,
+    isError,
+    error,
+    refetch,
+    deleteAutomation,
+    updateAutomation,
+  } = useAutomations();
 
   // Local state to allow instant interactive toggle switching
   const [localOverrides, setLocalOverrides] = useState<Record<string, 'ACTIVE' | 'PAUSED'>>({});
@@ -47,9 +59,46 @@ export default function AutomationsPage() {
     });
   }, [initialAutomations, localOverrides]);
 
-  const toggleStatus = (id: string, currentStatus: string) => {
+  const toggleStatus = async (id: string, currentStatus: string) => {
+    if (pendingToggleIds[id]) return;
+
     const newStatus = currentStatus === 'ACTIVE' ? 'PAUSED' : 'ACTIVE';
+
+    // 1. Optimistic UI update
     setLocalOverrides((prev) => ({ ...prev, [id]: newStatus }));
+    setPendingToggleIds((prev) => ({ ...prev, [id]: true }));
+
+    try {
+      // 2. Real backend mutation
+      await updateAutomation({ id, data: { status: newStatus } });
+      // 3. Clear override so React Query cache becomes the single source of truth
+      setLocalOverrides((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      showToast(`Automation ${newStatus === 'ACTIVE' ? 'activated' : 'paused'} successfully.`);
+    } catch (err: any) {
+      // 4. Roll back optimistic state on failure
+      setLocalOverrides((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      const errorDetail = err?.response?.data?.detail;
+      const msg =
+        typeof errorDetail === 'string'
+          ? errorDetail
+          : err?.message || 'Failed to update automation status. Please try again.';
+      showToast(msg);
+    } finally {
+      // 5. Clear pending state
+      setPendingToggleIds((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+    }
   };
 
   const counts = useMemo(() => {
@@ -268,6 +317,7 @@ export default function AutomationsPage() {
       {!isLoading && !isError && filteredItems.length > 0 && (
         <div className="space-y-3">
           {filteredItems.map((item) => {
+            const isPending = Boolean(pendingToggleIds[item.id]);
             const isRunning = item.status === 'ACTIVE';
             const commentsCount = item.stats_comments ?? item.stats?.comments ?? 0;
             const dmsCount = item.stats_dms_sent ?? item.stats?.dmsSent ?? 0;
@@ -325,9 +375,9 @@ export default function AutomationsPage() {
 
                 {/* Status Column (Desktop & Tablet) */}
                 <div className="hidden sm:flex items-center gap-2 shrink-0 w-24">
-                  <span className={`w-2 h-2 rounded-full ${isRunning ? 'bg-[#15803D]' : 'bg-[#9E9E96]'}`} />
+                  <span className={`w-2 h-2 rounded-full ${isPending ? 'bg-[#EAB308] animate-pulse' : isRunning ? 'bg-[#15803D]' : 'bg-[#9E9E96]'}`} />
                   <span className="text-xs font-semibold text-[#111110]">
-                    {isRunning ? 'Running' : 'Paused'}
+                    {isPending ? 'Saving...' : isRunning ? 'Running' : 'Paused'}
                   </span>
                 </div>
 
@@ -367,21 +417,34 @@ export default function AutomationsPage() {
                   {/* Toggle Switch */}
                   <button
                     type="button"
+                    disabled={isPending}
                     onClick={(e) => {
                       e.stopPropagation();
                       toggleStatus(item.id, item.status);
                     }}
-                    className={`relative inline-flex h-6 w-11 shrink-0 cursor-pointer rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                    className={`relative inline-flex h-6 w-11 shrink-0 rounded-full border-2 border-transparent transition-colors duration-200 ease-in-out focus:outline-none ${
+                      isPending ? 'cursor-wait opacity-60' : 'cursor-pointer'
+                    } ${
                       isRunning ? 'bg-[#15803D]' : 'bg-[#CBD5E1]'
                     }`}
-                    title={isRunning ? 'Click to pause automation' : 'Click to activate automation'}
+                    title={
+                      isPending
+                        ? 'Saving status changes...'
+                        : isRunning
+                        ? 'Click to pause automation'
+                        : 'Click to activate automation'
+                    }
                   >
                     <span
                       aria-hidden="true"
-                      className={`pointer-events-none inline-block h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
+                      className={`pointer-events-none inline-flex items-center justify-center h-5 w-5 transform rounded-full bg-white shadow ring-0 transition duration-200 ease-in-out ${
                         isRunning ? 'translate-x-5' : 'translate-x-0'
                       }`}
-                    />
+                    >
+                      {isPending && (
+                        <RefreshCw size={10} className="animate-spin text-[#70706B]" />
+                      )}
+                    </span>
                   </button>
 
                   {/* Context Menu Button */}

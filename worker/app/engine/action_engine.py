@@ -31,7 +31,7 @@ class ActionEngine:
         if action_type == "PUBLIC_REPLY":
             text = action_config.get("text", "Thanks @{username}! Sent the details to your DMs 📩")
             formatted_text = text.replace("{username}", username)
-            logger.info(f"Executing PUBLIC_REPLY for comment {comment_id}: {formatted_text}")
+            logger.info(f"Executing PUBLIC_REPLY for comment {comment_id} (text_len={len(formatted_text)})")
             
             res = {"status": "SUCCESS", "action": "PUBLIC_REPLY", "text": formatted_text}
             if instagram_client and comment_id:
@@ -43,13 +43,25 @@ class ActionEngine:
                     logger.error(f"Failed to post public reply to comment {comment_id}: {e}")
                     res["status"] = "FAILED"
                     res["error"] = str(e)
+                    if hasattr(e, "code"):
+                        res["error_code"] = getattr(e, "code", 500)
+                        res["meta_error"] = {
+                            "code": getattr(e, "code", 500),
+                            "subcode": getattr(e, "error_subcode", 0),
+                            "message": str(e)
+                        }
+                    if hasattr(e, "to_diagnostic_dict"):
+                        res["meta_diagnostic"] = e.to_diagnostic_dict()
             return res
 
         elif action_type == "PRIVATE_DM":
             text = action_config.get("text", "Hey {first_name}! Here is the resource you requested.")
             buttons = action_config.get("buttons") or []
             formatted_text = text.replace("{first_name}", username).replace("{username}", username)
-            logger.info(f"Executing PRIVATE_DM for comment {comment_id} / recipient {recipient_id}: {formatted_text}")
+            logger.info(
+                f"Executing PRIVATE_DM for comment {comment_id} / recipient {recipient_id} "
+                f"(text_len={len(formatted_text)}, buttons_count={len(buttons)})"
+            )
 
             res = {"status": "SUCCESS", "action": "PRIVATE_DM", "text": formatted_text, "buttons": buttons}
             if instagram_client:
@@ -66,11 +78,21 @@ class ActionEngine:
                     logger.error(f"Failed to send private DM to {recipient_id or comment_id}: {e}")
                     res["status"] = "FAILED"
                     res["error"] = str(e)
+                    if hasattr(e, "code"):
+                        res["error_code"] = getattr(e, "code", 500)
+                        res["meta_error"] = {
+                            "code": getattr(e, "code", 500),
+                            "subcode": getattr(e, "error_subcode", 0),
+                            "message": str(e)
+                        }
+                    if hasattr(e, "to_diagnostic_dict"):
+                        res["meta_diagnostic"] = e.to_diagnostic_dict()
             return res
 
         elif action_type == "TAG_CONTACT":
             tag = action_config.get("tag", "lead")
-            logger.info(f"Executing TAG_CONTACT for {username}: tag={tag}")
+            contact_id = context.get("contact_id")
+            logger.info(f"Executing TAG_CONTACT for contact {contact_id}: tag={tag}")
             res = {"status": "SUCCESS", "action": "TAG_CONTACT", "tag": tag}
 
             contact_id = context.get("contact_id")

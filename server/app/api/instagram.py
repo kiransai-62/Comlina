@@ -23,6 +23,7 @@ from app.schemas import (
     InstagramMediaPage,
     InstagramConnectionStatusResponse,
     InstagramAccountSummary,
+    WebhookSubscriptionStatusOut,
 )
 from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
 from app.integrations.instagram.client import MetaGraphClient
@@ -652,7 +653,15 @@ async def handle_oauth_callback(
 
     # Automatically install/subscribe webhook delivery on Meta for this Instagram account
     try:
-        await MetaOAuth.subscribe_app_to_account(access_token, ig_user_id)
+        sub_res = await MetaOAuth.subscribe_app_to_account(access_token, ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+        else:
+            account.webhook_subscription_status = "FAILED"
+            account.last_error_code = sub_res.get("error_code")
+        await db.commit()
+        await db.refresh(account)
     except Exception as ex:
         logger.warning(f"Non-fatal error subscribing app to account {ig_user_id}: {ex}")
 
@@ -839,7 +848,12 @@ async def refresh_account_token(
     await db.refresh(account)
 
     try:
-        await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+        sub_res = await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+            await db.commit()
+            await db.refresh(account)
     except Exception as ex:
         logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
 
@@ -907,7 +921,12 @@ async def sync_instagram_account_profile(
     await db.refresh(account)
 
     try:
-        await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+        sub_res = await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+            await db.commit()
+            await db.refresh(account)
     except Exception as ex:
         logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
 
@@ -950,3 +969,177 @@ async def disconnect_instagram_account(
 
     await db.commit()
     return None
+
+@router.get(
+    "/accounts/{account_id}/webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+async def inspect_account_webhook_subscription(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Inspects account-level webhook subscription status from Meta Graph API (GET /{ig_user_id}/subscribed_apps).
+    Workspace-authorized, never exposes access tokens or permits arbitrary account inspection.
+    """
+    stmt = select(InstagramAccount).where(
+        InstagramAccount.id == account_id,
+        _get_owner_filter(workspace, user)
+    )
+    res = await db.execute(stmt)
+    account = res.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    now = datetime.now(timezone.utc)
+    try:
+        current_token = decrypt_token(account.access_token_encrypted)
+    except Exception as e:
+        logger.error(f"Decryption failed for account {account.id}: {e}")
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_DECRYPTION_FAILED"
+        account.webhook_subscription_status = "FAILED"
+        await db.commit()
+        return WebhookSubscriptionStatusOut(
+            account_id=account.id,
+            ig_user_id=account.ig_user_id,
+            username=account.username,
+            is_subscribed=False,
+            subscribed_fields=[],
+            status="TOKEN_EXPIRED",
+            requires_reconnect=True,
+            can_retry=False,
+            error_code="TOKEN_DECRYPTION_FAILED",
+            error_message="Token decryption failed. Please reconnect your Instagram account.",
+            last_checked_at=now
+        )
+
+    res_meta = await MetaOAuth.check_app_subscription(current_token, account.ig_user_id)
+
+    # Update account state based on verified status
+    status_val = res_meta.get("status", "UNKNOWN")
+    if status_val == "TOKEN_EXPIRED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_EXPIRED"
+        account.webhook_subscription_status = "FAILED"
+    elif status_val == "PERMISSION_DENIED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "PERMISSION_DENIED"
+        account.webhook_subscription_status = "FAILED"
+    elif res_meta.get("is_subscribed"):
+        account.webhook_subscription_status = "SUBSCRIBED"
+        account.webhook_subscribed_at = now
+        account.last_error_code = None
+    elif status_val == "NOT_SUBSCRIBED":
+        account.webhook_subscription_status = "NOT_SUBSCRIBED"
+
+    account.last_validated_at = now
+    await db.commit()
+
+    return WebhookSubscriptionStatusOut(
+        account_id=account.id,
+        ig_user_id=account.ig_user_id,
+        username=account.username,
+        is_subscribed=res_meta.get("is_subscribed", False),
+        subscribed_fields=res_meta.get("subscribed_fields", []),
+        status=status_val,
+        requires_reconnect=res_meta.get("requires_reconnect", False),
+        can_retry=res_meta.get("can_retry", True),
+        error_code=res_meta.get("error_code"),
+        error_message=res_meta.get("error_message"),
+        last_checked_at=now
+    )
+
+@router.post(
+    "/accounts/{account_id}/webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+@router.post(
+    "/accounts/{account_id}/webhook-subscription/retry",
+    response_model=WebhookSubscriptionStatusOut
+)
+@router.post(
+    "/accounts/{account_id}/retry-webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+async def retry_account_webhook_subscription(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retries/re-asserts account-level webhook subscription via POST /{ig_user_id}/subscribed_apps.
+    Idempotent, workspace-authorized, avoids forcing full reconnect unless Meta requires reauthorization.
+    """
+    stmt = select(InstagramAccount).where(
+        InstagramAccount.id == account_id,
+        _get_owner_filter(workspace, user)
+    )
+    res = await db.execute(stmt)
+    account = res.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    now = datetime.now(timezone.utc)
+    try:
+        current_token = decrypt_token(account.access_token_encrypted)
+    except Exception as e:
+        logger.error(f"Decryption failed for account {account.id}: {e}")
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_DECRYPTION_FAILED"
+        account.webhook_subscription_status = "FAILED"
+        await db.commit()
+        return WebhookSubscriptionStatusOut(
+            account_id=account.id,
+            ig_user_id=account.ig_user_id,
+            username=account.username,
+            is_subscribed=False,
+            subscribed_fields=[],
+            status="TOKEN_EXPIRED",
+            requires_reconnect=True,
+            can_retry=False,
+            error_code="TOKEN_DECRYPTION_FAILED",
+            error_message="Token decryption failed. Please reconnect your Instagram account.",
+            last_checked_at=now
+        )
+
+    res_meta = await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+
+    status_val = res_meta.get("status", "UNKNOWN")
+    if res_meta.get("is_subscribed"):
+        account.webhook_subscription_status = "SUBSCRIBED"
+        account.webhook_subscribed_at = now
+        account.connection_status = "CONNECTED"
+        account.last_error_code = None
+    elif status_val == "TOKEN_EXPIRED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_EXPIRED"
+        account.webhook_subscription_status = "FAILED"
+    elif status_val == "PERMISSION_DENIED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "PERMISSION_DENIED"
+        account.webhook_subscription_status = "FAILED"
+    else:
+        account.webhook_subscription_status = "FAILED"
+        account.last_error_code = res_meta.get("error_code")
+
+    account.last_validated_at = now
+    await db.commit()
+
+    return WebhookSubscriptionStatusOut(
+        account_id=account.id,
+        ig_user_id=account.ig_user_id,
+        username=account.username,
+        is_subscribed=res_meta.get("is_subscribed", False),
+        subscribed_fields=res_meta.get("subscribed_fields", []),
+        status=status_val,
+        requires_reconnect=res_meta.get("requires_reconnect", False),
+        can_retry=res_meta.get("can_retry", True),
+        error_code=res_meta.get("error_code"),
+        error_message=res_meta.get("error_message"),
+        last_checked_at=now
+    )
+

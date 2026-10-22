@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
-from app.core.logging import log_diagnostic_event
+from app.core.logging import log_diagnostic_event, redact_string
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.messaging import InstagramMessaging
@@ -40,7 +40,7 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
     if webhook_event:
         webhook_event.status = status
         if error is not None:
-            webhook_event.error = error
+            webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
 
@@ -63,7 +63,7 @@ async def send_dm_job(
     if isinstance(event_data_or_text, str):
         recipient_id = event_id_or_recipient
         text = event_data_or_text
-        logger.info(f"Dispatched direct DM to recipient {recipient_id}: {text[:40]}...")
+        logger.info(f"Dispatched direct DM to recipient {recipient_id} (text_len={len(text)})")
         return {"status": "DELIVERED", "recipient_id": recipient_id}
 
     event_id = event_id_or_recipient
@@ -310,6 +310,7 @@ async def send_dm_job(
                         execution_summary["actions_executed"] += 1
                         execution_summary["processing_state"] = "resource_sent"
                         execution_summary["follower_verified"] = True
+                        execution_summary["follower_status"] = "FOLLOWING"
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
@@ -337,13 +338,15 @@ async def send_dm_job(
                         )
                         execution_summary["processing_state"] = "verification_pending"
                         execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "NOT_FOLLOWING"
                         execution_summary["actions_executed"] += 1
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
                         return execution_summary
 
-                    else:  # CHECK_UNAVAILABLE
+                    elif status_enum == FollowerStatus.CHECK_UNAVAILABLE:
+                        contact.follower_status = "CHECK_UNAVAILABLE"
                         contact.automation_state = "verification_unavailable"
                         unavail_text = "Instagram follow verification is temporarily unavailable. Please tap 'I followed! 🚀' again in a moment."
                         messaging_client = InstagramMessaging(meta_client)
@@ -354,6 +357,25 @@ async def send_dm_job(
                         )
                         execution_summary["processing_state"] = "verification_unavailable"
                         execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "CHECK_UNAVAILABLE"
+
+                        await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+                        await session.commit()
+                        return execution_summary
+
+                    else:  # UNKNOWN
+                        contact.follower_status = "UNKNOWN"
+                        contact.automation_state = "verification_unavailable"
+                        unknown_text = "We could not verify your follow status. Please ensure your Instagram profile is accessible and try again."
+                        messaging_client = InstagramMessaging(meta_client)
+                        await messaging_client.send_direct_message(
+                            ig_recipient_id=sender_ig_id,
+                            message_text=unknown_text,
+                            buttons=[{"label": "I followed! 🚀"[:20], "payload": "VERIFY_FOLLOW"}]
+                        )
+                        execution_summary["processing_state"] = "verification_unavailable"
+                        execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "UNKNOWN"
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
@@ -375,10 +397,10 @@ async def send_dm_job(
                     db_session=session
                 )
                 is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
+                action_results: List[Dict[str, Any]] = res.get("results", []) if is_matched else []
                 if is_matched:
                     execution_summary["automations_matched"] += 1
                     execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
-                    action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
 
                 log_diagnostic_event(
@@ -462,17 +484,26 @@ async def send_dm_job(
         except Exception as e:
             logger.error(f"Error in send_dm_job: {e}", exc_info=True)
             execution_summary["status"] = "FAILED"
-            execution_summary["error"] = str(e)
+            execution_summary["error"] = redact_string(str(e))
+            meta_err = e.to_diagnostic_dict() if hasattr(e, "to_diagnostic_dict") else None
+            diag_details: Dict[str, Any] = {
+                "status": "FAILED",
+                "error": redact_string(str(e))[:200]
+            }
+            if meta_err:
+                diag_details["meta_error"] = meta_err
+
             log_diagnostic_event(
                 stage="job_processed",
                 correlation_id=event_data.get("provider_event_id") or event_id,
                 event_type="MESSAGING",
-                http_status=500,
-                error_code="JOB_FAILED",
-                details={
-                    "status": "FAILED",
-                    "error": str(e)[:200]
-                }
+                http_status=getattr(e, "http_status", 500) or 500,
+                error_code=str(getattr(e, "code", "JOB_FAILED")),
+                details=diag_details
             )
-            await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "FAILED", str(e))
+            try:
+                async with get_db_session() as fail_session:
+                    await _update_webhook_event(fail_session, event_id, event_data.get("provider_event_id"), "FAILED", str(e))
+            except Exception:
+                pass
             return execution_summary

@@ -6,6 +6,33 @@ class InstagramMessaging:
     def __init__(self, client: MetaGraphClient):
         self.client = client
 
+    @staticmethod
+    def _format_private_reply_text(message_text: str, buttons: Optional[list] = None) -> str:
+        """
+        Meta Graph API restricts comment_id private replies to plain text messages.
+        If CTA buttons/links are configured, convert them into readable text with URLs
+        so Instagram natively generates link previews without sending unsupported button templates.
+        """
+        if not buttons:
+            return message_text
+
+        link_lines = []
+        for b in buttons:
+            label = (b.get("label") or b.get("title") or "").strip()
+            url = (b.get("url") or "").strip()
+            if url:
+                if label:
+                    link_lines.append(f"{label}: {url}")
+                else:
+                    link_lines.append(url)
+            elif b.get("payload"):
+                if label:
+                    link_lines.append(f"[{label}]")
+
+        if link_lines:
+            return f"{message_text}\n\n" + "\n".join(link_lines)
+        return message_text
+
     async def send_private_reply(
         self,
         comment_id: Optional[str],
@@ -16,60 +43,25 @@ class InstagramMessaging:
         """
         Sends a private DM reply in response to an Instagram comment using the 7-day window.
         Uses POST me/messages with recipient={'comment_id': comment_id}.
-        Automatically falls back to recipient={'id': fallback_sender_id} if comment_id fails or is missing.
-        Supports button templates when buttons are provided (e.g. responseDm.buttons).
+
+        Meta Graph API strictly requires recipient={'comment_id': ...} messages to be plain text.
+        Configured CTA links are formatted into the text body to leverage Instagram's native link previews.
+        Unsupported attachment templates are never sent to comment_id.
+
+        Does NOT automatically fall back to direct messaging using fallback_sender_id when comment_id
+        fails, because direct messaging outside the 24-hour conversational window violates Meta messaging policy
+        and masks the root error.
+        If comment_id is omitted but fallback_sender_id is provided, delegates to send_direct_message.
         """
         endpoint = "me/messages"
 
-        # Format message payload (template if buttons provided, else plain text)
-        msg_obj: Dict[str, Any]
-        if buttons:
-            meta_buttons = []
-            for b in buttons[:3]:  # Meta allows max 3 buttons per button template
-                label = b.get("label") or b.get("title") or "Open Link"
-                url = b.get("url")
-                if url:
-                    meta_buttons.append({
-                        "type": "web_url",
-                        "url": url,
-                        "title": label[:20]
-                    })
-                elif b.get("payload"):
-                    meta_buttons.append({
-                        "type": "postback",
-                        "title": label[:20],
-                        "payload": b.get("payload")
-                    })
-            if meta_buttons:
-                msg_obj = {
-                    "attachment": {
-                        "type": "template",
-                        "payload": {
-                            "template_type": "button",
-                            "text": message_text,
-                            "buttons": meta_buttons
-                        }
-                    }
-                }
-            else:
-                msg_obj = {"text": message_text}
-        else:
-            msg_obj = {"text": message_text}
-
         if comment_id:
-            try:
-                payload = {
-                    "recipient": {"comment_id": comment_id},
-                    "message": msg_obj
-                }
-                return await self.client.post(endpoint, json_data=payload)
-            except Exception as e:
-                if not fallback_sender_id:
-                    raise
-                import logging
-                logging.getLogger("messaging").warning(
-                    f"Failed to send private reply by comment_id={comment_id}, falling back to recipient_id={fallback_sender_id}: {e}"
-                )
+            formatted_text = self._format_private_reply_text(message_text, buttons)
+            payload = {
+                "recipient": {"comment_id": comment_id},
+                "message": {"text": formatted_text}
+            }
+            return await self.client.post(endpoint, json_data=payload)
 
         if fallback_sender_id:
             return await self.send_direct_message(

@@ -43,7 +43,7 @@ export default function CreateAutomationPage() {
   const searchParams = useSearchParams();
   const editId = searchParams.get('edit');
   const showToast = useUIStore((s) => s.showToast);
-  const { createAutomation, publishAutomation } = useAutomations();
+  const { createAutomation, updateAutomation, publishAutomation } = useAutomations();
   const { openUpgradeModal } = usePlan();
 
   // Active Flow View: 'comment_to_dm' | 'comment_reply' | 'comment_to_lead' | 'dm_reply' | 'dm_to_lead' | 'story_reply' | 'story_mention' | 'picker' | 'custom'
@@ -81,8 +81,32 @@ export default function CreateAutomationPage() {
         if (res) {
           setEditingAutomation(res);
           const flow = res.flow_definition;
-          if (flow?.type === 'COMMENT_TO_DM' || flow?.trigger?.type === 'COMMENT') {
-            setActiveFlowView('comment_to_dm');
+          const flowType = (flow?.type || '').toUpperCase();
+          if (flowType === 'COMMENT_TO_DM' || flow?.trigger?.type === 'COMMENT' || res.trigger_type === 'COMMENT') {
+            if (flowType === 'COMMENT_REPLY') {
+              setActiveFlowView('comment_reply');
+            } else if (flowType === 'COMMENT_TO_LEAD') {
+              setActiveFlowView('comment_to_lead');
+            } else {
+              setActiveFlowView('comment_to_dm');
+            }
+          } else if (flowType === 'DM_REPLY') {
+            setActiveFlowView('dm_reply');
+          } else if (flowType === 'DM_TO_LEAD') {
+            setActiveFlowView('dm_to_lead');
+          } else if (flowType === 'STORY_REPLY') {
+            setActiveFlowView('story_reply');
+          } else if (flowType === 'STORY_MENTION') {
+            setActiveFlowView('story_mention');
+          }
+
+          if (res.name || res.instagram_account_id || flow) {
+            setDraft((prev) => ({
+              ...prev,
+              name: res.name || prev.name,
+              instagramAccountId: res.instagram_account_id || prev.instagramAccountId,
+              ...(flow && typeof flow === 'object' ? flow : {}),
+            }));
           }
         }
       }).catch((e: any) => {
@@ -188,24 +212,48 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData.name || draft.name || 'Story Mention Flow',
-        description: 'Automated Direct Message Replies to Story Mentions',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'STORY',
-        flow_definition: {
-          version: 2,
+      const flowDef = {
+        version: 2,
+        type: 'STORY_MENTION',
+        trigger: {
           type: 'STORY_MENTION',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+          replyToAll: flowData?.replyToAll,
+          keywords: flowData?.keywords || [],
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData.name || draft.name || 'Story Mention Flow',
+            description: 'Automated Direct Message Replies to Story Mentions',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'Story Mention Flow draft saved! 📁' : 'Story Mention Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData.name || draft.name || 'Story Mention Flow',
+          description: 'Automated Direct Message Replies to Story Mentions',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'STORY',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'Story Mention Flow saved as draft! 📁' : 'Story Mention Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'Story Mention Flow saved as draft! 📁' : 'Story Mention Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save story mention flow.');
@@ -219,24 +267,48 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData.name || draft.name || 'Story Reply Flow',
-        description: 'Automated Direct Message Replies to Story Interactions',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'STORY',
-        flow_definition: {
-          version: 2,
-          type: 'STORY_REPLY',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+      const flowDef = {
+        version: 2,
+        type: 'STORY_REPLY',
+        trigger: {
+          type: 'STORY',
+          replyToAll: flowData?.replyToAll,
+          keywords: flowData?.keywords || [],
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData.name || draft.name || 'Story Reply Flow',
+            description: 'Automated Direct Message Replies to Story Interactions',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'Story Reply Flow draft saved! 📁' : 'Story Reply Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData.name || draft.name || 'Story Reply Flow',
+          description: 'Automated Direct Message Replies to Story Interactions',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'STORY',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'Story Reply Flow saved as draft! 📁' : 'Story Reply Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'Story Reply Flow saved as draft! 📁' : 'Story Reply Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save story reply flow.');
@@ -250,24 +322,48 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData.flowName || draft.name || 'DM to Lead Collection',
-        description: 'Automated Lead Qualification & Collection from DMs',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'DM',
-        flow_definition: {
-          version: 2,
-          type: 'DM_TO_LEAD',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+      const flowDef = {
+        version: 2,
+        type: 'DM_TO_LEAD',
+        trigger: {
+          type: 'DM',
+          replyToAll: flowData?.replyToAll,
+          keywords: flowData?.keywords || [],
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData.flowName || draft.name || 'DM to Lead Collection',
+            description: 'Automated Lead Qualification & Collection from DMs',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'DM Lead Flow draft saved! 📁' : 'DM Lead Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData.flowName || draft.name || 'DM to Lead Collection',
+          description: 'Automated Lead Qualification & Collection from DMs',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'DM',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'DM Lead Flow saved as draft! 📁' : 'DM Lead Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'DM Lead Flow saved as draft! 📁' : 'DM Lead Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save lead flow.');
@@ -281,24 +377,48 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData.name || draft.name || 'DM Reply Flow',
-        description: 'Automated Direct Message Replies for Keywords',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'DM',
-        flow_definition: {
-          version: 2,
-          type: 'DM_REPLY',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+      const flowDef = {
+        version: 2,
+        type: 'DM_REPLY',
+        trigger: {
+          type: 'DM',
+          replyToAll: flowData?.replyToAll,
+          keywords: flowData?.keywords || [],
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData.name || draft.name || 'DM Reply Flow',
+            description: 'Automated Direct Message Replies for Keywords',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'DM Reply Flow draft saved! 📁' : 'DM Reply Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData.name || draft.name || 'DM Reply Flow',
+          description: 'Automated Direct Message Replies for Keywords',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'DM',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'DM Reply Flow saved as draft! 📁' : 'DM Reply Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'DM Reply Flow saved as draft! 📁' : 'DM Reply Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save DM reply automation.');
@@ -312,24 +432,49 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData.flowName || draft.name || 'Comment to Lead Collection',
-        description: 'Automated Lead Qualification & Collection from Comments',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'COMMENT',
-        flow_definition: {
-          version: 2,
-          type: 'COMMENT_TO_LEAD',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+      const flowDef = {
+        version: 2,
+        type: 'COMMENT_TO_LEAD',
+        trigger: {
+          type: 'COMMENT',
+          selectedPostId: flowData?.selectedPostId,
+          replyToAll: flowData?.trigger?.replyToAll ?? flowData?.replyToAll,
+          keyword: flowData?.trigger?.keyword ?? flowData?.triggerKeyword,
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData.flowName || draft.name || 'Comment to Lead Collection',
+            description: 'Automated Lead Qualification & Collection from Comments',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'Comment Lead Flow draft saved! 📁' : 'Lead Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData.flowName || draft.name || 'Comment to Lead Collection',
+          description: 'Automated Lead Qualification & Collection from Comments',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'COMMENT',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'Comment Lead Flow saved as draft! 📁' : 'Lead Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'Comment Lead Flow saved as draft! 📁' : 'Lead Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save lead flow.');
@@ -343,24 +488,49 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: draft.name || 'Comment Reply Flow',
-        description: 'Automated Comment Reply public responses',
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'COMMENT',
-        flow_definition: {
-          version: 2,
-          type: 'COMMENT_REPLY',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
+      const flowDef = {
+        version: 2,
+        type: 'COMMENT_REPLY',
+        trigger: {
+          type: 'COMMENT',
+          selectedPostId: flowData?.selectedPostId,
+          replyToAll: flowData?.replyToAll,
+          keywords: flowData?.keywords || [],
         },
-      });
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: draft.name || 'Comment Reply Flow',
+            description: 'Automated Comment Reply public responses',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'Comment Reply Flow draft saved! 📁' : 'Comment Reply Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: draft.name || 'Comment Reply Flow',
+          description: 'Automated Comment Reply public responses',
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'COMMENT',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'Comment Reply Flow saved as draft! 📁' : 'Comment Reply Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'Comment Reply Flow saved as draft! 📁' : 'Comment Reply Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save automation.');
@@ -374,24 +544,43 @@ export default function CreateAutomationPage() {
     setErrorMessage(null);
     const isDraft = flowData?.status === 'DRAFT';
     try {
-      const created = await createAutomation({
-        name: flowData?.name || draft.name || 'Comment to DM Flow',
-        description: 'Automated Comment to DM Instagram responses',
-        instagram_account_id: flowData?.instagram_account_id || draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: 'COMMENT',
-        flow_definition: {
-          version: 2,
-          type: 'COMMENT_TO_DM',
-          ...flowData,
-          status: isDraft ? 'DRAFT' : 'ACTIVE',
-        },
-      });
+      const flowDef = {
+        version: 2,
+        type: 'COMMENT_TO_DM',
+        ...flowData,
+        status: isDraft ? 'DRAFT' : 'ACTIVE',
+      };
 
-      if (!isDraft && created?.id) {
-        await publishAutomation(created.id);
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: flowData?.name || draft.name || 'Comment to DM Flow',
+            description: 'Automated Comment to DM Instagram responses',
+            status: isDraft ? 'DRAFT' : 'ACTIVE',
+            flow_definition: flowDef,
+          },
+        });
+        if (!isDraft) {
+          await publishAutomation(editId);
+        }
+        showToast(isDraft ? 'Comment to DM Flow draft saved! 📁' : 'Comment to DM Flow updated & active! 🚀');
+      } else {
+        const created = await createAutomation({
+          name: flowData?.name || draft.name || 'Comment to DM Flow',
+          description: 'Automated Comment to DM Instagram responses',
+          instagram_account_id: flowData?.instagram_account_id || draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: 'COMMENT',
+          flow_definition: flowDef,
+        });
+
+        if (!isDraft && created?.id) {
+          await publishAutomation(created.id);
+        }
+
+        showToast(isDraft ? 'Comment to DM Flow saved as draft! 📁' : 'Comment to DM Flow published & active! 🚀');
       }
 
-      showToast(isDraft ? 'Comment to DM Flow saved as draft! 📁' : 'Comment to DM Flow published & active! 🚀');
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save automation.');
@@ -403,18 +592,34 @@ export default function CreateAutomationPage() {
     setIsPublishing(true);
     setErrorMessage(null);
     try {
-      await createAutomation({
-        name: draft.name || 'Untitled Draft Automation',
-        description: `Draft playbook for ${draft.typeId}`,
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: draft.trigger.type,
-        flow_definition: {
-          version: 2,
-          ...draft,
-          status: 'DRAFT',
-        },
-      });
-      showToast('Automation saved as draft! 📁');
+      const flowDef = {
+        version: 2,
+        ...draft,
+        status: 'DRAFT',
+      };
+
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: draft.name || 'Untitled Draft Automation',
+            description: `Draft playbook for ${draft.typeId}`,
+            status: 'DRAFT',
+            flow_definition: flowDef,
+          },
+        });
+        showToast('Automation draft updated! 📁');
+      } else {
+        await createAutomation({
+          name: draft.name || 'Untitled Draft Automation',
+          description: `Draft playbook for ${draft.typeId}`,
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: draft.trigger.type,
+          flow_definition: flowDef,
+        });
+        showToast('Automation saved as draft! 📁');
+      }
+
       router.push('/dashboard/automations');
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to save draft.');
@@ -464,17 +669,31 @@ export default function CreateAutomationPage() {
     };
 
     try {
-      const created = await createAutomation({
-        name: draft.name || 'Instagram Automation',
-        description: `Active ${draft.typeId} automation`,
-        instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
-        trigger_type: draft.trigger.type,
-        flow_definition: flowDefinition,
-      });
+      if (editId) {
+        await updateAutomation({
+          id: editId,
+          data: {
+            name: draft.name || 'Instagram Automation',
+            description: `Active ${draft.typeId} automation`,
+            status: 'ACTIVE',
+            flow_definition: flowDefinition,
+          },
+        });
+        setCreatedAutomationId(editId);
+        await publishAutomation(editId);
+      } else {
+        const created = await createAutomation({
+          name: draft.name || 'Instagram Automation',
+          description: `Active ${draft.typeId} automation`,
+          instagram_account_id: draft.instagramAccountId || accounts[0]?.id,
+          trigger_type: draft.trigger.type,
+          flow_definition: flowDefinition,
+        });
 
-      if (created?.id) {
-        setCreatedAutomationId(created.id);
-        await publishAutomation(created.id);
+        if (created?.id) {
+          setCreatedAutomationId(created.id);
+          await publishAutomation(created.id);
+        }
       }
 
       setIsPublishSuccess(true);
@@ -711,6 +930,7 @@ export default function CreateAutomationPage() {
         accountName={accountHandle}
         isSaving={isPublishing}
         onPreviewChange={handlePreviewChange}
+        initialData={editingAutomation?.flow_definition || editingAutomation}
       />
     );
   }
@@ -725,6 +945,7 @@ export default function CreateAutomationPage() {
         accountName={accountHandle}
         isSaving={isPublishing}
         onPreviewChange={handlePreviewChange}
+        initialData={editingAutomation?.flow_definition || editingAutomation}
       />
     );
   }

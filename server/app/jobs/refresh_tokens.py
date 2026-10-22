@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token, encrypt_token
+from app.core.logging import redact_data
 from app.models import InstagramAccount
 
 logger = logging.getLogger("refresh_tokens")
@@ -96,7 +97,7 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                 else:
                     account.last_error_code = "REFRESH_FAILED"
                     summary["failed"] += 1
-                    logger.warning("Refresh rejected for %s: %s", account.id, body)
+                    logger.warning("Refresh rejected for %s: %s", account.id, redact_data(body))
 
         await session.commit()
 

@@ -139,7 +139,9 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS connection_status VARCHAR(32) NOT NULL DEFAULT 'CONNECTED',
                 ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ,
                 ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ,
-                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64);
+                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64),
+                ADD COLUMN IF NOT EXISTS webhook_subscription_status VARCHAR(32) DEFAULT 'UNKNOWN',
+                ADD COLUMN IF NOT EXISTS webhook_subscribed_at TIMESTAMPTZ;
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
@@ -163,6 +165,10 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_refreshed_at TIMESTAMP"))
             if "last_error_code" not in existing_cols:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error_code TEXT"))
+            if "webhook_subscription_status" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscription_status TEXT DEFAULT 'UNKNOWN'"))
+            if "webhook_subscribed_at" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscribed_at TIMESTAMP"))
 
             res_c = await conn.execute(text("PRAGMA table_info(contacts)"))
             contact_cols = {row[1] for row in res_c.fetchall()}

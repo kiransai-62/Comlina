@@ -59,19 +59,22 @@ SENSITIVE_KEYS = {
     "encryption_key",
     "service_role_key",
     "anon_key",
+    "cookie",
+    "set_cookie",
 }
 
 # Regex patterns for stripping sensitive strings in log messages
 BEARER_PATTERN = re.compile(r"(?i)\b(Bearer|Basic)\s+[A-Za-z0-9\-._~+/]+=*", re.IGNORECASE)
 SIGNATURE_HEADER_PATTERN = re.compile(r"(?i)(sha256=)[0-9a-fA-F]{32,64}")
+META_TOKEN_PATTERN = re.compile(r"\bEAA[A-Za-z0-9_\-]{12,}\b")
 
 KEY_VALUE_PATTERN = re.compile(
-    r"(?i)(['\"]?(?:password|secret|client_secret|access_token|refresh_token|api_key|signed_request|signature|token)['\"]?\s*[:=]\s*['\"]?)([^\"'\s,;&]+)(['\"]?)",
+    r"(?i)(['\"]?(?:password|secret|client_secret|app_secret|access_token|refresh_token|api_key|apikey|signed_request|signature|token|encryption_key|private_key)['\"]?\s*[:=]\s*['\"]?)([^\"'\s,;&\[\]]+)(['\"]?)",
     re.IGNORECASE
 )
 
 QUERY_PARAM_PATTERN = re.compile(
-    r"(?i)([?&](?:access_token|code|client_secret|signed_request|signature)=)([^& \t\r\n]+)",
+    r"(?i)([?&](?:access_token|code|client_secret|app_secret|signed_request|signature|token)=)([^& \t\r\n]+)",
     re.IGNORECASE
 )
 
@@ -84,13 +87,16 @@ def redact_string(text: str) -> str:
     # 1. Bearer / Basic auth tokens
     text = BEARER_PATTERN.sub(r"\1 [REDACTED]", text)
 
-    # 2. Meta webhook signature header sha256=...
+    # 2. Standalone Meta access tokens (e.g. EAA...)
+    text = META_TOKEN_PATTERN.sub("[REDACTED_META_TOKEN]", text)
+
+    # 3. Meta webhook signature header sha256=...
     text = SIGNATURE_HEADER_PATTERN.sub(r"\1[REDACTED]", text)
 
-    # 3. Query string secrets (?access_token=... / &signed_request=...)
+    # 4. Query string secrets (?access_token=... / &signed_request=...)
     text = QUERY_PARAM_PATTERN.sub(r"\1[REDACTED]", text)
 
-    # 4. Key-value pairs (key=value, "key": "value", key: value)
+    # 5. Key-value pairs (key=value, "key": "value", key: value)
     text = KEY_VALUE_PATTERN.sub(r"\1[REDACTED]\3", text)
 
     return text

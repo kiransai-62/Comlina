@@ -19,9 +19,25 @@ export interface ConnectedInstagramAccount {
   last_validated_at?: string | null;
   last_refreshed_at?: string | null;
   last_error_code?: string | null;
+  webhook_subscription_status?: string;
+  webhook_subscribed_at?: string | null;
   connectedAt?: string;
   connected_at?: string;
   status?: 'CONNECTED' | 'EXPIRED' | 'REAUTHORIZATION_REQUIRED' | 'EXPIRING_SOON' | string;
+}
+
+export interface WebhookSubscriptionStatus {
+  account_id: string;
+  ig_user_id: string;
+  username: string;
+  is_subscribed: boolean;
+  subscribed_fields: string[];
+  status: 'SUBSCRIBED' | 'NOT_SUBSCRIBED' | 'TOKEN_EXPIRED' | 'PERMISSION_DENIED' | 'RATE_LIMITED' | 'META_ERROR' | 'UNKNOWN';
+  requires_reconnect: boolean;
+  can_retry: boolean;
+  error_code?: string | null;
+  error_message?: string | null;
+  last_checked_at: string;
 }
 
 export type InstagramConnectionStatus =

@@ -8,7 +8,7 @@ from sqlalchemy import select, func
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
 from app.core.plans import get_plan_config
-from app.core.logging import log_diagnostic_event
+from app.core.logging import log_diagnostic_event, redact_string
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.models import (
@@ -42,7 +42,7 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
     if webhook_event:
         webhook_event.status = status
         if error is not None:
-            webhook_event.error = error
+            webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
 async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -270,6 +270,9 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                     execution_summary["processing_state"] = res.get("processing_state")
                 if res.get("follower_verified") is not None:
                     execution_summary["follower_verified"] = res.get("follower_verified")
+                if res.get("follower_status"):
+                    execution_summary["follower_status"] = res.get("follower_status")
+                    event_data["follower_status"] = res.get("follower_status")
 
                 if is_matched:
                     action_results = res.get("results", [])
@@ -460,18 +463,22 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
     except Exception as ex:
         logger.error(f"Error processing comment event {event_id}: {ex}", exc_info=True)
         execution_summary["status"] = "FAILED"
-        execution_summary["error"] = str(ex)
+        execution_summary["error"] = redact_string(str(ex))
+        meta_err = ex.to_diagnostic_dict() if hasattr(ex, "to_diagnostic_dict") else None
+        diag_details: Dict[str, Any] = {
+            "status": "FAILED",
+            "error": redact_string(str(ex))[:200]
+        }
+        if meta_err:
+            diag_details["meta_error"] = meta_err
 
         log_diagnostic_event(
             stage="job_processed",
             correlation_id=event_data.get("provider_event_id") or event_id,
             event_type="COMMENT",
-            http_status=500,
-            error_code="JOB_FAILED",
-            details={
-                "status": "FAILED",
-                "error": str(ex)[:200]
-            }
+            http_status=getattr(ex, "http_status", 500) or 500,
+            error_code=str(getattr(ex, "code", "JOB_FAILED")),
+            details=diag_details
         )
 
         try:

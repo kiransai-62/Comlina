@@ -2,6 +2,7 @@
 import { useAutomationsQuery } from './queries';
 import {
   useCreateAutomationMutation,
+  useUpdateAutomationMutation,
   usePublishAutomationMutation,
   useDeleteAutomationMutation,
 } from './mutations';
@@ -9,6 +10,7 @@ import {
 export function useAutomations() {
   const query = useAutomationsQuery();
   const createMutation = useCreateAutomationMutation();
+  const updateMutation = useUpdateAutomationMutation();
   const publishMutation = usePublishAutomationMutation();
   const deleteMutation = useDeleteAutomationMutation();
 
@@ -19,6 +21,7 @@ export function useAutomations() {
     error: query.error,
     refetch: query.refetch,
     createAutomation: createMutation.mutateAsync,
+    updateAutomation: updateMutation.mutateAsync,
     publishAutomation: publishMutation.mutateAsync,
     deleteAutomation: deleteMutation.mutateAsync,
   };

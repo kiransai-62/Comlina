@@ -4,6 +4,7 @@ import logging
 import httpx
 from typing import Dict, Any, Optional
 from app.core.config import worker_settings
+from app.core.logging import redact_string
 from app.integrations.instagram.exceptions import (
     MetaGraphAPIError, MetaRateLimitError, MetaTokenExpiredError
 )
@@ -20,6 +21,8 @@ class MetaGraphClient:
     Version is dynamically injected from worker_settings.META_GRAPH_API_VERSION.
     Includes automated retries with exponential backoff for transient network issues
     and Meta rate limits (error codes 4, 17, 32, 613).
+    Permanent errors (e.g. 190 token expired, 100 invalid param, 10/200 permission)
+    are never retried indiscriminately.
     """
     def __init__(self, access_token: str, base_url: Optional[str] = None):
         self.access_token = access_token
@@ -53,7 +56,13 @@ class MetaGraphClient:
             except (httpx.TransportError, httpx.TimeoutException) as exc:
                 if attempt >= MAX_RETRIES:
                     logger.error(f"Worker Meta Graph API connection failed after {attempt} attempts: {exc}")
-                    raise MetaGraphAPIError(f"Network transport error connecting to Meta: {exc}", 503) from exc
+                    raise MetaGraphAPIError(
+                        f"Network transport error connecting to Meta: {exc}",
+                        code=503,
+                        http_status=503,
+                        error_type="TransportError",
+                        is_transient=True,
+                    ) from exc
                 logger.warning(
                     f"Worker Meta Graph API connection error (attempt {attempt}/{MAX_RETRIES}): {exc}. Retrying in {backoff}s..."
                 )
@@ -75,10 +84,11 @@ class MetaGraphClient:
                 raise
 
             except MetaGraphAPIError as exc:
-                # If Meta returns a transient 5xx server error or transient error code 1 or 2
-                if (exc.code in (1, 2) or exc.code >= 500) and attempt < MAX_RETRIES:
+                # Only retry transient errors (codes 1/2 or transient 5xx server errors).
+                # Never retry permanent failures (invalid params, permissions, comment expired).
+                if exc.is_transient and attempt < MAX_RETRIES:
                     logger.warning(
-                        f"Worker Meta transient server error (code {exc.code}) on attempt {attempt}/{MAX_RETRIES}. Retrying in {backoff}s..."
+                        f"Worker Meta transient error (code {exc.code}, status {exc.http_status}) on attempt {attempt}/{MAX_RETRIES}. Retrying in {backoff}s..."
                     )
                     await asyncio.sleep(backoff)
                     backoff *= BACKOFF_FACTOR
@@ -100,20 +110,77 @@ class MetaGraphClient:
     def _handle_response(self, resp: httpx.Response) -> Dict[str, Any]:
         try:
             data = resp.json()
-        except Exception:
-            raise MetaGraphAPIError(f"Invalid JSON returned from Meta: {resp.text}", resp.status_code)
+        except Exception as json_err:
+            raw_preview = redact_string(resp.text[:300] if resp.text else "")
+            is_transient = resp.status_code in (500, 502, 503, 504)
+            raise MetaGraphAPIError(
+                message=f"Invalid JSON returned from Meta (HTTP {resp.status_code}): {raw_preview}",
+                code=resp.status_code,
+                http_status=resp.status_code,
+                error_type="MalformedResponse",
+                is_transient=is_transient,
+            ) from json_err
 
-        if "error" in data:
-            err = data["error"]
+        if isinstance(data, dict) and "error" in data:
+            err = data["error"] if isinstance(data["error"], dict) else {}
             code = err.get("code", 0)
             subcode = err.get("error_subcode", 0)
             msg = err.get("message", "Unknown Meta Graph API error")
+            err_type = err.get("type")
+            fbtrace_id = err.get("fbtrace_id")
+            meta_transient = err.get("is_transient")
 
-            if code in (4, 17, 32, 613):
-                raise MetaRateLimitError(f"Meta Graph API Rate Limit: {msg}", code, subcode)
-            elif code == 190:
-                raise MetaTokenExpiredError(f"Meta Graph Token Expired: {msg}", code, subcode)
+            # Determine transient flag
+            if isinstance(meta_transient, bool):
+                is_transient = meta_transient
+            elif code in (4, 17, 32, 613) or resp.status_code == 429:
+                is_transient = True
+            elif code in (1, 2) or (resp.status_code >= 500 and code not in (10, 100, 190, 200)):
+                is_transient = True
+            elif code in (10, 100, 190, 200, 298) or subcode == 2018001 or resp.status_code in (400, 401, 403, 404, 422):
+                is_transient = False
             else:
-                raise MetaGraphAPIError(f"Meta Graph Error ({code}): {msg}", code, subcode)
+                is_transient = False
+
+            if code in (4, 17, 32, 613) or resp.status_code == 429:
+                raise MetaRateLimitError(
+                    message=f"Meta Graph API Rate Limit: {msg}",
+                    code=code,
+                    error_subcode=subcode,
+                    http_status=resp.status_code,
+                    error_type=err_type,
+                    is_transient=True,
+                    fbtrace_id=fbtrace_id,
+                )
+            elif code == 190:
+                raise MetaTokenExpiredError(
+                    message=f"Meta Graph Token Expired: {msg}",
+                    code=code,
+                    error_subcode=subcode,
+                    http_status=resp.status_code,
+                    error_type=err_type,
+                    is_transient=False,
+                    fbtrace_id=fbtrace_id,
+                )
+            else:
+                raise MetaGraphAPIError(
+                    message=f"Meta Graph Error ({code}): {msg}",
+                    code=code,
+                    error_subcode=subcode,
+                    http_status=resp.status_code,
+                    error_type=err_type,
+                    is_transient=is_transient,
+                    fbtrace_id=fbtrace_id,
+                )
+
+        if resp.status_code >= 400:
+            is_transient = resp.status_code in (429, 500, 502, 503, 504)
+            raise MetaGraphAPIError(
+                message=f"Meta Graph API HTTP Error {resp.status_code}",
+                code=resp.status_code,
+                http_status=resp.status_code,
+                error_type="HTTPError",
+                is_transient=is_transient,
+            )
 
         return data

@@ -69,6 +69,8 @@ class InstagramAccount(Base):
     last_refreshed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
     permissions: Mapped[Any] = mapped_column(JSONB, default=["instagram_manage_messages", "instagram_manage_comments"])
+    webhook_subscription_status: Mapped[Optional[str]] = mapped_column(String(32), default="UNKNOWN", nullable=True)
+    webhook_subscribed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 
