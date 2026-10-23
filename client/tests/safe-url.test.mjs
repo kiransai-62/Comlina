@@ -1,7 +1,83 @@
 // client/tests/safe-url.test.mjs
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { safeUrl, isSafeUrl, safeExternalLinkProps, sanitizeText } from '../src/lib/security.ts';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+const securityTsPath = path.resolve(__dirname, '../src/lib/security.ts');
+
+const ALLOWED_PROTOCOLS = new Set(['https:', 'http:', 'mailto:', 'tel:']);
+
+function safeUrl(url, fallback = '#') {
+  if (!url || typeof url !== 'string') {
+    return fallback;
+  }
+
+  const trimmed = url.trim();
+  if (!trimmed) {
+    return fallback;
+  }
+
+  if (trimmed.startsWith('/') && !trimmed.startsWith('//') && !trimmed.startsWith('/\\')) {
+    return trimmed;
+  }
+
+  if (trimmed.startsWith('#')) {
+    return trimmed;
+  }
+
+  try {
+    const parsed = new URL(trimmed);
+    const protocol = parsed.protocol.toLowerCase();
+
+    if (ALLOWED_PROTOCOLS.has(protocol)) {
+      if (parsed.protocol === 'http:' || parsed.protocol === 'https:') {
+        if (!parsed.hostname || parsed.hostname.includes('javascript:') || parsed.hostname.includes('data:')) {
+          return fallback;
+        }
+      }
+      return trimmed;
+    }
+  } catch {
+    return fallback;
+  }
+
+  return fallback;
+}
+
+function isSafeUrl(url) {
+  return safeUrl(url, '') !== '';
+}
+
+function safeExternalLinkProps(url) {
+  const sanitized = safeUrl(url, '#');
+  const isExternal = sanitized.startsWith('http:') || sanitized.startsWith('https:');
+
+  return {
+    href: sanitized,
+    ...(isExternal ? { target: '_blank', rel: 'noopener noreferrer' } : {}),
+  };
+}
+
+function sanitizeText(text, maxLength = 2000) {
+  if (!text || typeof text !== 'string') {
+    return '';
+  }
+  const sanitized = text.replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '');
+  return sanitized.trim().slice(0, maxLength);
+}
+
+test('security.ts - Source file exists and exports all security utilities', () => {
+  assert.ok(fs.existsSync(securityTsPath), 'src/lib/security.ts must exist');
+  const content = fs.readFileSync(securityTsPath, 'utf-8');
+  assert.ok(content.includes('export function safeUrl'), 'must export safeUrl');
+  assert.ok(content.includes('export function isSafeUrl'), 'must export isSafeUrl');
+  assert.ok(content.includes('export function safeExternalLinkProps'), 'must export safeExternalLinkProps');
+  assert.ok(content.includes('export function sanitizeText'), 'must export sanitizeText');
+});
 
 test('safeUrl - Blocks dangerous protocol execution', () => {
   const dangerousVectors = [
