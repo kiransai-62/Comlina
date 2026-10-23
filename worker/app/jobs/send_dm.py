@@ -7,6 +7,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
+from app.core.logging import log_diagnostic_event, redact_string
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.messaging import InstagramMessaging
@@ -39,7 +40,7 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
     if webhook_event:
         webhook_event.status = status
         if error is not None:
-            webhook_event.error = error
+            webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
 
@@ -49,7 +50,7 @@ async def send_dm_job(
     event_data_or_text: Union[Dict[str, Any], str]
 ) -> Dict[str, Any]:
     """
-    ARQ job handler supporting:
+    Job handler supporting:
     1. Direct message dispatch: send_dm_job(ctx, recipient_id, message_text)
     2. MESSAGING webhook event pipeline: send_dm_job(ctx, event_id, event_data)
        - Upserts Contact (sets is_converted=True, refreshes last_interaction_at to open 24h window)
@@ -59,14 +60,12 @@ async def send_dm_job(
        - Records BOT response message and updates stats
        - Updates WebhookEvent status to PROCESSED
     """
-    # Direct message dispatch branch
     if isinstance(event_data_or_text, str):
         recipient_id = event_id_or_recipient
         text = event_data_or_text
-        logger.info(f"Dispatched direct DM to recipient {recipient_id}: {text[:40]}...")
+        logger.info(f"Dispatched direct DM to recipient {recipient_id} (text_len={len(text)})")
         return {"status": "DELIVERED", "recipient_id": recipient_id}
 
-    # MESSAGING webhook event handler branch
     event_id = event_id_or_recipient
     event_data = event_data_or_text
     logger.info(f"Worker processing messaging webhook job: event_id={event_id}")
@@ -117,10 +116,32 @@ async def send_dm_job(
                 logger.warning(f"No active InstagramAccount found for recipient_id={recipient_id}")
                 execution_summary["status"] = "IGNORED"
                 execution_summary["reason"] = "ACCOUNT_NOT_FOUND"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    error_code="ACCOUNT_NOT_FOUND",
+                    details={"status": "IGNORED", "reason": "ACCOUNT_NOT_FOUND"}
+                )
                 await _update_webhook_event(session, event_id, provider_event_id, "IGNORED", "Instagram account not found")
                 return execution_summary
 
-            # Decrypt access token
+            # Defense-in-depth: Skip self-event if sender is the business account itself
+            if sender_id and account and sender_id == account.ig_user_id:
+                logger.info(f"Skipping self-event for account {account.id} (sender_id == ig_user_id == {sender_id})")
+                execution_summary["status"] = "SKIPPED_SELF_EVENT"
+                execution_summary["reason"] = "SELF_EVENT_SKIPPED"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    details={"status": "SKIPPED_SELF_EVENT"}
+                )
+                await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED", "Self-event skipped")
+                return execution_summary
+
             meta_client = None
             try:
                 decrypted_token = decrypt_token(account.access_token_encrypted)
@@ -194,17 +215,28 @@ async def send_dm_job(
                     conversation.unread_count = (conversation.unread_count or 0) + 1
                     await session.flush()
 
-                # 4. Store incoming message from viewer (sender_type="CONTACT")
-                contact_msg = Message(
-                    workspace_id=account.workspace_id,
-                    conversation_id=conversation.id,
-                    sender_type="CONTACT",
-                    text=incoming_text,
-                    meta_message_id=provider_event_id,
-                    created_at=datetime.now(timezone.utc)
-                )
-                session.add(contact_msg)
-                await session.flush()
+                # 4. Store incoming message from viewer (sender_type="CONTACT") with deduplication
+                is_duplicate = False
+                if provider_event_id:
+                    stmt_dup = select(Message.id).where(
+                        Message.conversation_id == conversation.id,
+                        Message.meta_message_id == provider_event_id
+                    )
+                    res_dup = await session.execute(stmt_dup)
+                    if res_dup.scalar_one_or_none():
+                        is_duplicate = True
+
+                if not is_duplicate:
+                    contact_msg = Message(
+                        workspace_id=account.workspace_id,
+                        conversation_id=conversation.id,
+                        sender_type="CONTACT",
+                        text=incoming_text,
+                        meta_message_id=provider_event_id,
+                        created_at=datetime.now(timezone.utc)
+                    )
+                    session.add(contact_msg)
+                    await session.flush()
 
                 # 4.5 Follow-to-Unlock Recheck Pipeline
                 custom_fields = dict(contact.custom_fields) if isinstance(contact.custom_fields, dict) else {}
@@ -278,6 +310,7 @@ async def send_dm_job(
                         execution_summary["actions_executed"] += 1
                         execution_summary["processing_state"] = "resource_sent"
                         execution_summary["follower_verified"] = True
+                        execution_summary["follower_status"] = "FOLLOWING"
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
@@ -305,13 +338,15 @@ async def send_dm_job(
                         )
                         execution_summary["processing_state"] = "verification_pending"
                         execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "NOT_FOLLOWING"
                         execution_summary["actions_executed"] += 1
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
                         return execution_summary
 
-                    else:  # CHECK_UNAVAILABLE
+                    elif status_enum == FollowerStatus.CHECK_UNAVAILABLE:
+                        contact.follower_status = "CHECK_UNAVAILABLE"
                         contact.automation_state = "verification_unavailable"
                         unavail_text = "Instagram follow verification is temporarily unavailable. Please tap 'I followed! 🚀' again in a moment."
                         messaging_client = InstagramMessaging(meta_client)
@@ -322,6 +357,25 @@ async def send_dm_job(
                         )
                         execution_summary["processing_state"] = "verification_unavailable"
                         execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "CHECK_UNAVAILABLE"
+
+                        await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+                        await session.commit()
+                        return execution_summary
+
+                    else:  # UNKNOWN
+                        contact.follower_status = "UNKNOWN"
+                        contact.automation_state = "verification_unavailable"
+                        unknown_text = "We could not verify your follow status. Please ensure your Instagram profile is accessible and try again."
+                        messaging_client = InstagramMessaging(meta_client)
+                        await messaging_client.send_direct_message(
+                            ig_recipient_id=sender_ig_id,
+                            message_text=unknown_text,
+                            buttons=[{"label": "I followed! 🚀"[:20], "payload": "VERIFY_FOLLOW"}]
+                        )
+                        execution_summary["processing_state"] = "verification_unavailable"
+                        execution_summary["follower_verified"] = False
+                        execution_summary["follower_status"] = "UNKNOWN"
 
                         await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
                         await session.commit()
@@ -342,17 +396,46 @@ async def send_dm_job(
                     instagram_client=meta_client,
                     db_session=session
                 )
-                if res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED"):
+                is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
+                action_results: List[Dict[str, Any]] = res.get("results", []) if is_matched else []
+                if is_matched:
                     execution_summary["automations_matched"] += 1
                     execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
-                    action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
 
+                log_diagnostic_event(
+                    stage="automation_matched",
+                    correlation_id=provider_event_id or event_id,
+                    event_type="MESSAGING",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    error_code=None if is_matched else "TRIGGER_MISMATCH",
+                    details={
+                        "automation_id": str(auto.id),
+                        "matched": is_matched,
+                        "trigger_type": auto.trigger_type,
+                        "flow_status": res.get("status")
+                    }
+                )
+
+                if is_matched:
                     for act_res in action_results:
+                        log_diagnostic_event(
+                            stage="instagram_api_result",
+                            correlation_id=provider_event_id or event_id,
+                            event_type="MESSAGING",
+                            workspace_id=str(account.workspace_id),
+                            account_id=str(account.id),
+                            http_status=200 if act_res.get("status") == "SUCCESS" else 400,
+                            error_code=None if act_res.get("status") == "SUCCESS" else str(act_res.get("error", "API_ERROR")),
+                            details={
+                                "action": act_res.get("action"),
+                                "status": act_res.get("status"),
+                            }
+                        )
                         if act_res.get("status") == "SUCCESS":
                             if act_res.get("action") == "PRIVATE_DM":
                                 auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
-                                # Record bot response message
                                 if conversation:
                                     bot_msg = Message(
                                         workspace_id=account.workspace_id,
@@ -382,12 +465,45 @@ async def send_dm_job(
 
             # 7. Update WebhookEvent to PROCESSED
             await _update_webhook_event(session, event_id, provider_event_id, "PROCESSED")
+            log_diagnostic_event(
+                stage="job_processed",
+                correlation_id=provider_event_id or event_id,
+                event_type="MESSAGING",
+                workspace_id=str(account.workspace_id),
+                account_id=str(account.id),
+                http_status=200,
+                details={
+                    "status": execution_summary["status"],
+                    "automations_matched": execution_summary["automations_matched"],
+                    "actions_executed": execution_summary["actions_executed"]
+                }
+            )
             await session.commit()
             return execution_summary
 
         except Exception as e:
             logger.error(f"Error in send_dm_job: {e}", exc_info=True)
             execution_summary["status"] = "FAILED"
-            execution_summary["error"] = str(e)
-            await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "FAILED", str(e))
+            execution_summary["error"] = redact_string(str(e))
+            meta_err = e.to_diagnostic_dict() if hasattr(e, "to_diagnostic_dict") else None
+            diag_details: Dict[str, Any] = {
+                "status": "FAILED",
+                "error": redact_string(str(e))[:200]
+            }
+            if meta_err:
+                diag_details["meta_error"] = meta_err
+
+            log_diagnostic_event(
+                stage="job_processed",
+                correlation_id=event_data.get("provider_event_id") or event_id,
+                event_type="MESSAGING",
+                http_status=getattr(e, "http_status", 500) or 500,
+                error_code=str(getattr(e, "code", "JOB_FAILED")),
+                details=diag_details
+            )
+            try:
+                async with get_db_session() as fail_session:
+                    await _update_webhook_event(fail_session, event_id, event_data.get("provider_event_id"), "FAILED", str(e))
+            except Exception:
+                pass
             return execution_summary

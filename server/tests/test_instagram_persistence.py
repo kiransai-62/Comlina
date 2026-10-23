@@ -323,3 +323,157 @@ async def test_multi_user_isolation(mock_user_and_workspace):
             assert list_resp.json() == []
     finally:
         app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+async def test_token_refresh_fallback_to_connected_at(mock_user_and_workspace):
+    """
+    Verify Meta 24h refresh rule:
+    When last_refreshed_at is None, connected_at is used as fallback.
+    If connected <24h ago, /refresh-token skips the external Meta call
+    and preserves CONNECTED status.
+    """
+    user, workspace = mock_user_and_workspace
+    now = datetime.now(timezone.utc)
+    account_id = uuid.uuid4()
+    account = InstagramAccount(
+        id=account_id,
+        workspace_id=workspace.id,
+        user_id=user.id,
+        ig_user_id="17841400123",
+        username="newly_connected_creator",
+        access_token_encrypted=encrypt_token("valid_recent_token"),
+        account_type="BUSINESS",
+        follower_count=1000,
+        is_active=True,
+        connection_status="CONNECTED",
+        last_refreshed_at=None,
+        connected_at=now - timedelta(hours=3), # connected 3 hours ago
+        updated_at=now
+    )
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = account
+    mock_session.execute.return_value = mock_result
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_workspace] = lambda: workspace
+    app.dependency_overrides[get_db] = lambda: mock_session
+
+    try:
+        with patch("app.integrations.instagram.oauth.MetaOAuth.refresh_long_lived_token") as mock_refresh:
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/instagram/accounts/{account_id}/refresh-token")
+                assert resp.status_code == 200
+                data = resp.json()
+                assert data["username"] == "newly_connected_creator"
+                assert data["connection_status"] == "CONNECTED"
+                # Meta API call should be skipped because token was connected <24h ago
+                mock_refresh.assert_not_called()
+    finally:
+        app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+async def test_list_media_code_190_profile_check_preserves_connection(mock_user_and_workspace):
+    """
+    Verify that if list_media encounters MetaTokenExpiredError (code 190),
+    it checks token liveness via fetch_instagram_profile before revoking.
+    If profile is still valid, the account is NOT marked REAUTHORIZATION_REQUIRED.
+    """
+    from app.integrations.instagram.exceptions import MetaTokenExpiredError
+
+    user, workspace = mock_user_and_workspace
+    now = datetime.now(timezone.utc)
+    account_id = uuid.uuid4()
+    account = InstagramAccount(
+        id=account_id,
+        workspace_id=workspace.id,
+        user_id=user.id,
+        ig_user_id="17841400123",
+        username="resilient_creator",
+        access_token_encrypted=encrypt_token("EAA_sample_long_lived_token"),
+        token_expires_at=now + timedelta(days=50),
+        is_active=True,
+        connection_status="CONNECTED",
+        connected_at=now,
+        updated_at=now
+    )
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalars.return_value.first.return_value = account
+    mock_session.execute.return_value = mock_result
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_workspace] = lambda: workspace
+    app.dependency_overrides[get_db] = lambda: mock_session
+
+    try:
+        with patch("app.api.instagram.MetaGraphClient") as mock_client_cls, \
+             patch("app.api.instagram.MetaOAuth.fetch_instagram_profile") as mock_fetch_profile:
+            mock_client = AsyncMock()
+            mock_client_cls.return_value = mock_client
+            # Simulate endpoint raising token expired error
+            mock_client.get.side_effect = MetaTokenExpiredError("Invalid OAuth access token", 190)
+            # But profile check verifies token is alive!
+            mock_fetch_profile.return_value = {"id": "17841400123", "username": "resilient_creator"}
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.get("/api/instagram/media")
+                # Returns 502 instead of 409, and does NOT corrupt connection_status
+                assert resp.status_code == 502
+                assert account.connection_status == "CONNECTED"
+    finally:
+        app.dependency_overrides.clear()
+
+@pytest.mark.asyncio
+async def test_refresh_token_meta_error_profile_check_preserves_connection(mock_user_and_workspace):
+    """
+    Verify that when refresh_account_token encounters a MetaOAuthError,
+    it verifies token liveness. If token is alive, connection_status is preserved.
+    """
+    from app.integrations.instagram.oauth import MetaOAuthError
+
+    user, workspace = mock_user_and_workspace
+    now = datetime.now(timezone.utc)
+    account_id = uuid.uuid4()
+    account = InstagramAccount(
+        id=account_id,
+        workspace_id=workspace.id,
+        user_id=user.id,
+        ig_user_id="17841400123",
+        username="resilient_creator_2",
+        access_token_encrypted=encrypt_token("sample_token_abc"),
+        token_expires_at=now + timedelta(days=20),
+        is_active=True,
+        connection_status="CONNECTED",
+        last_refreshed_at=now - timedelta(days=2), # older than 24h
+        connected_at=now - timedelta(days=5),
+        updated_at=now
+    )
+
+    mock_session = AsyncMock()
+    mock_result = MagicMock()
+    mock_result.scalar_one_or_none.return_value = account
+    mock_session.execute.return_value = mock_result
+
+    app.dependency_overrides[get_current_user] = lambda: user
+    app.dependency_overrides[get_current_workspace] = lambda: workspace
+    app.dependency_overrides[get_db] = lambda: mock_session
+
+    try:
+        with patch("app.api.instagram.MetaOAuth.refresh_long_lived_token") as mock_refresh, \
+             patch("app.api.instagram.MetaOAuth.fetch_instagram_profile") as mock_fetch_profile:
+            # Simulate Meta error
+            mock_refresh.side_effect = MetaOAuthError("Invalid request: temporary Meta rejection")
+            # Profile check confirms token is actually active
+            mock_fetch_profile.return_value = {"id": "17841400123", "username": "resilient_creator_2"}
+
+            async with AsyncClient(transport=ASGITransport(app=app), base_url="http://test") as client:
+                resp = await client.post(f"/api/instagram/accounts/{account_id}/refresh-token")
+                assert resp.status_code == 400
+                # Connection status is NOT corrupted to REAUTHORIZATION_REQUIRED
+                assert account.connection_status == "CONNECTED"
+    finally:
+        app.dependency_overrides.clear()
+

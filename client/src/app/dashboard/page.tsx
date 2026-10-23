@@ -82,7 +82,7 @@ export default function DashboardOverviewPage() {
     startConnect: handleStartMetaOAuth,
   } = useInstagramConnection();
 
-  const hasAccounts = isConnected && accounts && accounts.length > 0;
+  const hasAccounts = (isConnected || needsReauth) && !!primaryAccount;
 
   const { 
     data: summary, 

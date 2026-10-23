@@ -23,11 +23,13 @@ from app.schemas import (
     InstagramMediaPage,
     InstagramConnectionStatusResponse,
     InstagramAccountSummary,
+    WebhookSubscriptionStatusOut,
 )
 from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.exceptions import MetaGraphAPIError, MetaTokenExpiredError, MetaRateLimitError
 from app.core.encryption import encrypt_token, decrypt_token
+from app.core.replay_cache import replay_cache
 
 logger = logging.getLogger("instagram_api")
 router = APIRouter(prefix="/instagram", tags=["Instagram"])
@@ -180,8 +182,6 @@ async def get_instagram_connection_status(
         )
 
 def _get_owner_filter(workspace: Workspace, user: Any):
-    if hasattr(user, "id") and user.id is not None:
-        return (InstagramAccount.workspace_id == workspace.id) | (InstagramAccount.user_id == user.id)
     return (InstagramAccount.workspace_id == workspace.id)
 
 @router.get("/accounts", response_model=List[InstagramAccountOut])
@@ -286,29 +286,36 @@ async def list_instagram_media(
     if after:
         params["after"] = after
 
-    # Official Meta Graph API endpoint:
-    # On graph.facebook.com for page-linked IG account, use {ig_user_id}/media.
-    # On graph.instagram.com, me/media or {ig_user_id}/media.
-    endpoint = f"{account.ig_user_id}/media" if (token.startswith("EAA") and account.ig_user_id) else "me/media"
+    # Official Meta Instagram Graph API endpoint:
+    endpoint = "me/media"
 
     try:
         raw = await MetaGraphClient(token).get(endpoint, params=params)
     except MetaTokenExpiredError:
-        account.connection_status = "REAUTHORIZATION_REQUIRED"
-        account.last_error_code = "TOKEN_EXPIRED"
-        await db.commit()
-        raise HTTPException(status_code=409, detail="Instagram token expired or revoked. Please reconnect the account.")
+        # Before revoking credentials or setting REAUTHORIZATION_REQUIRED in DB,
+        # perform a lightweight sanity check with fetch_instagram_profile
+        # to ensure the token is truly dead, rather than an endpoint routing anomaly.
+        is_token_alive = False
+        try:
+            profile = await MetaOAuth.fetch_instagram_profile(token)
+            if profile.get("id") or profile.get("user_id"):
+                is_token_alive = True
+        except Exception:
+            is_token_alive = False
+
+        if not is_token_alive:
+            account.connection_status = "REAUTHORIZATION_REQUIRED"
+            account.last_error_code = "TOKEN_EXPIRED"
+            await db.commit()
+            raise HTTPException(status_code=409, detail="Instagram token expired or revoked. Please reconnect the account.")
+        else:
+            logger.warning("Media fetch returned code 190, but profile check verified token is active. Preserving connection status.")
+            raise HTTPException(status_code=502, detail="Instagram media service is temporarily unavailable. Please retry.")
     except MetaRateLimitError:
         raise HTTPException(status_code=429, detail="Instagram rate limit reached. Try again shortly.")
     except MetaGraphAPIError as e:
         logger.warning(f"Failed to fetch media from Meta endpoint {endpoint}: {e}")
-        if endpoint != "me/media":
-            try:
-                raw = await MetaGraphClient(token).get("me/media", params=params)
-            except Exception:
-                raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
-        else:
-            raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
+        raise HTTPException(status_code=400, detail=f"Instagram media fetch failed: {e}")
 
     raw_items = raw.get("data", []) if isinstance(raw, dict) else []
     paging = raw.get("paging", {}) if isinstance(raw, dict) else {}
@@ -340,23 +347,71 @@ def _is_allowed_redirect_uri(redirect_uri: Optional[str]) -> bool:
         parsed = urlparse(redirect_uri)
         if not parsed.scheme or not parsed.netloc:
             return False
+
+        scheme = parsed.scheme.lower()
+        if scheme not in ("http", "https"):
+            return False
+
+        # Reject any credentials in URI authority (e.g. user:pass@host or host@attacker.com)
+        if parsed.username or parsed.password or "@" in parsed.netloc:
+            return False
+
         host = (parsed.hostname or "").lower()
+        if not host:
+            return False
+
+        is_prod = (settings.ENVIRONMENT == "production")
+
+        # In production, scheme MUST be https
+        if is_prod and scheme != "https":
+            return False
+
+        # Canonical production domains
         allowed_hosts = {
-            "localhost",
-            "127.0.0.1",
-            "0.0.0.0",
             "app.comlina.ai",
             "comlina.ai",
             "www.comlina.ai",
+            "app.comlina.com",
             "comlina.com",
             "www.comlina.com",
         }
+
+        # Add host from configured META_REDIRECT_URI
         if settings.META_REDIRECT_URI:
             meta_parsed = urlparse(settings.META_REDIRECT_URI)
             if meta_parsed.hostname:
                 allowed_hosts.add(meta_parsed.hostname.lower())
-        if host in allowed_hosts or host.endswith(".onrender.com") or host.endswith(".vercel.app"):
+
+        # Add hosts from configured ALLOWED_ORIGINS
+        if settings.ALLOWED_ORIGINS:
+            origins = settings.ALLOWED_ORIGINS if isinstance(settings.ALLOWED_ORIGINS, list) else settings.ALLOWED_ORIGINS.split(",")
+            for orig in origins:
+                orig_clean = orig.strip()
+                if orig_clean:
+                    parsed_orig = urlparse(orig_clean)
+                    if parsed_orig.hostname:
+                        allowed_hosts.add(parsed_orig.hostname.lower())
+
+        # Add hosts from CORS_ORIGINS
+        if settings.CORS_ORIGINS:
+            cors_list = settings.CORS_ORIGINS if isinstance(settings.CORS_ORIGINS, list) else settings.CORS_ORIGINS.split(",")
+            for cor in cors_list:
+                cor_clean = cor.strip()
+                if cor_clean:
+                    parsed_cor = urlparse(cor_clean)
+                    if parsed_cor.hostname:
+                        allowed_hosts.add(parsed_cor.hostname.lower())
+
+        # Localhost/Loopback and staging wildcard suffixes allowed only in non-production environments
+        dev_hosts = {"localhost", "127.0.0.1", "0.0.0.0"}
+        if not is_prod:
+            allowed_hosts.update(dev_hosts)
+            if host.endswith(".onrender.com") or host.endswith(".vercel.app"):
+                return True
+
+        if host in allowed_hosts:
             return True
+
         return False
     except Exception:
         return False
@@ -366,8 +421,9 @@ def generate_oauth_state(workspace_id: uuid.UUID, user_id: Optional[uuid.UUID] =
     nonce = secrets.token_hex(16)
     uid_str = str(user_id) if user_id else "any"
     state_payload = f"{workspace_id}:{uid_str}:{timestamp}:{nonce}"
+    key = settings.get_primary_encryption_key() or settings.TOKEN_ENCRYPTION_KEY or "fallback_key"
     sig = hmac.new(
-        key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
+        key=key.encode("utf-8"),
         msg=state_payload.encode("utf-8"),
         digestmod=hashlib.sha256
     ).hexdigest()[:16]
@@ -381,6 +437,8 @@ def verify_oauth_state(
 ) -> bool:
     try:
         parts = state.split(":")
+        keys = settings.get_encryption_keys() or [settings.TOKEN_ENCRYPTION_KEY or "fallback_key"]
+
         # 5-part state: ws_id:user_id:timestamp:nonce:sig
         if len(parts) == 5:
             ws_id_str, u_id_str, ts_str, nonce, provided_sig = parts
@@ -393,24 +451,32 @@ def verify_oauth_state(
             if now - ts > max_age_seconds or ts > now + 300:
                 return False
             state_payload = f"{ws_id_str}:{u_id_str}:{ts_str}:{nonce}"
-            expected_sig = hmac.new(
-                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
-                msg=state_payload.encode("utf-8"),
-                digestmod=hashlib.sha256
-            ).hexdigest()[:16]
-            return hmac.compare_digest(provided_sig, expected_sig)
+            for k in keys:
+                expected_sig = hmac.new(
+                    key=k.encode("utf-8"),
+                    msg=state_payload.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).hexdigest()[:16]
+                if hmac.compare_digest(provided_sig, expected_sig):
+                    return True
+            return False
+
         # Legacy 3-part state: ws_id:nonce:sig (backwards compatibility)
         elif len(parts) == 3:
             ws_id_str, nonce, provided_sig = parts
             if ws_id_str != str(workspace_id):
                 return False
             state_payload = f"{ws_id_str}:{nonce}"
-            expected_sig = hmac.new(
-                key=settings.TOKEN_ENCRYPTION_KEY.encode("utf-8"),
-                msg=state_payload.encode("utf-8"),
-                digestmod=hashlib.sha256
-            ).hexdigest()[:16]
-            return hmac.compare_digest(provided_sig, expected_sig)
+            for k in keys:
+                expected_sig = hmac.new(
+                    key=k.encode("utf-8"),
+                    msg=state_payload.encode("utf-8"),
+                    digestmod=hashlib.sha256
+                ).hexdigest()[:16]
+                if hmac.compare_digest(provided_sig, expected_sig):
+                    return True
+            return False
+
         return False
     except Exception:
         return False
@@ -446,11 +512,26 @@ async def handle_oauth_callback(
     queries Meta Graph API for connected Instagram Business Account details,
     and upserts InstagramAccount record with encrypted token and expiration date.
     """
+    # 0. Validate redirect_uri destination if supplied
+    if data.redirect_uri and not _is_allowed_redirect_uri(data.redirect_uri):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Invalid redirect_uri destination."
+        )
+
     # 1. Verify CSRF OAuth state (bound to workspace and user with 15m expiration)
     if not data.state or not verify_oauth_state(data.state, workspace.id, user.id):
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or missing OAuth state parameter (CSRF protection failed)."
+        )
+
+    # 2. Check and record OAuth state replay cache (single-use token)
+    state_hash = hashlib.sha256(data.state.encode("utf-8")).hexdigest()
+    if not await replay_cache.check_and_record(state_hash, ttl_seconds=900, namespace="oauth_state"):
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="OAuth state parameter has already been used or expired."
         )
 
     try:
@@ -569,38 +650,51 @@ async def handle_oauth_callback(
 
     await db.commit()
     await db.refresh(account)
+
+    # Automatically install/subscribe webhook delivery on Meta for this Instagram account
+    try:
+        sub_res = await MetaOAuth.subscribe_app_to_account(access_token, ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+        else:
+            account.webhook_subscription_status = "FAILED"
+            account.last_error_code = sub_res.get("error_code")
+        await db.commit()
+        await db.refresh(account)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {ig_user_id}: {ex}")
+
     return account
 
-@router.post("/connect-dev-account", response_model=InstagramAccountOut)
-async def connect_dev_account(
-    user: User = Depends(get_current_user),
-    workspace: Workspace = Depends(get_current_workspace),
-    db: AsyncSession = Depends(get_db)
-):
-    """
-    Instantly connects a verified Instagram Creator account in development mode.
-    Allows testing full automation and conversation flows immediately without waiting for Meta console whitelisting.
-    """
-    if settings.ENVIRONMENT != "development":
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Dev account connection is disabled in production environments."
+if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ROUTES:
+    @router.post("/connect-dev-account", response_model=InstagramAccountOut)
+    async def connect_dev_account(
+        user: User = Depends(get_current_user),
+        workspace: Workspace = Depends(get_current_workspace),
+        db: AsyncSession = Depends(get_db)
+    ):
+        """
+        Instantly connects a verified Instagram Creator account in development mode.
+        Allows testing full automation and conversation flows immediately without waiting for Meta console whitelisting.
+        """
+        dev_token = settings.INSTAGRAM_ACCESS_TOKEN or os.getenv("DEV_IG_ACCESS_TOKEN", "")
+        if not dev_token:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="No dev access token configured. Set INSTAGRAM_ACCESS_TOKEN or DEV_IG_ACCESS_TOKEN in environment."
+            )
+
+        stmt = select(InstagramAccount).where(
+            _get_owner_filter(workspace, user),
+            InstagramAccount.is_active == True
         )
+        res = await db.execute(stmt)
+        existing = res.scalar_one_or_none()
 
-    stmt = select(InstagramAccount).where(
-        _get_owner_filter(workspace, user),
-        InstagramAccount.is_active == True
-    )
-    res = await db.execute(stmt)
-    existing = res.scalar_one_or_none()
-    dev_token = settings.INSTAGRAM_ACCESS_TOKEN or (
-        settings.META_WEBHOOK_VERIFY_TOKEN if settings.META_WEBHOOK_VERIFY_TOKEN.startswith("IGAA") else ""
-    ) or os.getenv("DEV_IG_ACCESS_TOKEN", "")
-
-    now = datetime.now(timezone.utc)
-    user_id = user.id if (hasattr(user, "id") and user.id is not None) else None
-    if existing:
-        if dev_token:
+        now = datetime.now(timezone.utc)
+        user_id = user.id if (hasattr(user, "id") and user.id is not None) else None
+        if existing:
             existing.access_token_encrypted = encrypt_token(dev_token)
             if user_id:
                 existing.user_id = user_id
@@ -610,32 +704,32 @@ async def connect_dev_account(
             existing.last_error_code = None
             await db.commit()
             await db.refresh(existing)
-        return existing
+            return existing
 
-    dev_ig_id = "29500779709524479"
-    account = InstagramAccount(
-        workspace_id=workspace.id,
-        user_id=user_id,
-        ig_user_id=dev_ig_id,
-        username="aiworkbench.lab",
-        account_type="MEDIA_CREATOR",
-        follower_count=19,
-        profile_pic_url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80",
-        access_token_encrypted=encrypt_token(dev_token),
-        token_expires_at=now + timedelta(days=60),
-        is_active=True,
-        auth_method="DEV_MOCK",
-        connection_status="CONNECTED",
-        last_validated_at=now,
-        last_refreshed_at=now,
-        last_error_code=None,
-        connected_at=now,
-        updated_at=now
-    )
-    db.add(account)
-    await db.commit()
-    await db.refresh(account)
-    return account
+        dev_ig_id = os.getenv("DEV_IG_USER_ID", "29500779709524479")
+        account = InstagramAccount(
+            workspace_id=workspace.id,
+            user_id=user_id,
+            ig_user_id=dev_ig_id,
+            username=os.getenv("DEV_IG_USERNAME", "aiworkbench.lab"),
+            account_type="MEDIA_CREATOR",
+            follower_count=19,
+            profile_pic_url="https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150&auto=format&fit=crop&q=80",
+            access_token_encrypted=encrypt_token(dev_token),
+            token_expires_at=now + timedelta(days=60),
+            is_active=True,
+            auth_method="DEV_MOCK",
+            connection_status="CONNECTED",
+            last_validated_at=now,
+            last_refreshed_at=now,
+            last_error_code=None,
+            connected_at=now,
+            updated_at=now
+        )
+        db.add(account)
+        await db.commit()
+        await db.refresh(account)
+        return account
 
 @router.post("/accounts/{account_id}/refresh-token", response_model=InstagramAccountOut)
 async def refresh_account_token(
@@ -675,13 +769,13 @@ async def refresh_account_token(
 
     # 2. Check Meta 24-hour refresh rule:
     # Meta long-lived tokens cannot be refreshed if they are less than 24 hours old.
-    # If refreshed within 24h, return current account without error.
-    if getattr(account, "last_refreshed_at", None):
-        last_ref = account.last_refreshed_at
+    # If refreshed or connected within 24h, return current account without error.
+    last_ref = getattr(account, "last_refreshed_at", None) or getattr(account, "connected_at", None)
+    if last_ref:
         if last_ref.tzinfo is None:
             last_ref = last_ref.replace(tzinfo=timezone.utc)
         if now - last_ref < timedelta(hours=24):
-            logger.info(f"Account {account.id} token was refreshed less than 24h ago; skipping Meta API call.")
+            logger.info(f"Account {account.id} token was refreshed or connected less than 24h ago; skipping Meta API call.")
             account.last_validated_at = now
             await db.commit()
             await db.refresh(account)
@@ -704,7 +798,23 @@ async def refresh_account_token(
     except MetaOAuthError as e:
         err_msg = str(e)
         logger.warning(f"MetaOAuthError during token refresh for account {account.id}: {err_msg}")
-        if "190" in err_msg or "expired" in err_msg.lower() or "invalid" in err_msg.lower():
+        if "24 hours" in err_msg.lower():
+            account.last_refreshed_at = now
+            account.last_validated_at = now
+            await db.commit()
+            await db.refresh(account)
+            return account
+
+        # Verify whether token is truly dead before marking REAUTHORIZATION_REQUIRED
+        is_token_alive = False
+        try:
+            profile = await MetaOAuth.fetch_instagram_profile(current_token)
+            if profile.get("id") or profile.get("user_id"):
+                is_token_alive = True
+        except Exception:
+            is_token_alive = False
+
+        if not is_token_alive and ("190" in err_msg or "expired" in err_msg.lower() or "revoked" in err_msg.lower()):
             account.connection_status = "REAUTHORIZATION_REQUIRED"
             account.last_error_code = "TOKEN_REVOKED"
             await db.commit()
@@ -712,16 +822,15 @@ async def refresh_account_token(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Instagram session expired or revoked. Please reconnect: {err_msg}"
             )
-        elif "24 hours" in err_msg.lower():
-            account.last_refreshed_at = now
-            account.last_validated_at = now
-            await db.commit()
-            await db.refresh(account)
-            return account
         else:
             account.last_error_code = "REFRESH_FAILED"
+            if is_token_alive:
+                account.last_validated_at = now
             await db.commit()
-            raise HTTPException(status_code=400, detail=err_msg)
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Instagram token refresh failed: {err_msg}"
+            )
 
     new_token = refreshed_data["access_token"]
     expires_in = refreshed_data.get("expires_in", 5184000)
@@ -737,9 +846,21 @@ async def refresh_account_token(
 
     await db.commit()
     await db.refresh(account)
+
+    try:
+        sub_res = await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+            await db.commit()
+            await db.refresh(account)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
+
     return account
 
 @router.post("/accounts/{account_id}/sync", response_model=InstagramAccountOut)
+@router.post("/accounts/{account_id}/sync-profile", response_model=InstagramAccountOut)
 async def sync_instagram_account_profile(
     account_id: uuid.UUID,
     user: User = Depends(get_current_user),
@@ -798,6 +919,17 @@ async def sync_instagram_account_profile(
 
     await db.commit()
     await db.refresh(account)
+
+    try:
+        sub_res = await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+        if sub_res.get("is_subscribed"):
+            account.webhook_subscription_status = "SUBSCRIBED"
+            account.webhook_subscribed_at = now
+            await db.commit()
+            await db.refresh(account)
+    except Exception as ex:
+        logger.warning(f"Non-fatal error subscribing app to account {account.ig_user_id}: {ex}")
+
     return account
 
 @router.delete("/accounts/{account_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -837,3 +969,177 @@ async def disconnect_instagram_account(
 
     await db.commit()
     return None
+
+@router.get(
+    "/accounts/{account_id}/webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+async def inspect_account_webhook_subscription(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Inspects account-level webhook subscription status from Meta Graph API (GET /{ig_user_id}/subscribed_apps).
+    Workspace-authorized, never exposes access tokens or permits arbitrary account inspection.
+    """
+    stmt = select(InstagramAccount).where(
+        InstagramAccount.id == account_id,
+        _get_owner_filter(workspace, user)
+    )
+    res = await db.execute(stmt)
+    account = res.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    now = datetime.now(timezone.utc)
+    try:
+        current_token = decrypt_token(account.access_token_encrypted)
+    except Exception as e:
+        logger.error(f"Decryption failed for account {account.id}: {e}")
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_DECRYPTION_FAILED"
+        account.webhook_subscription_status = "FAILED"
+        await db.commit()
+        return WebhookSubscriptionStatusOut(
+            account_id=account.id,
+            ig_user_id=account.ig_user_id,
+            username=account.username,
+            is_subscribed=False,
+            subscribed_fields=[],
+            status="TOKEN_EXPIRED",
+            requires_reconnect=True,
+            can_retry=False,
+            error_code="TOKEN_DECRYPTION_FAILED",
+            error_message="Token decryption failed. Please reconnect your Instagram account.",
+            last_checked_at=now
+        )
+
+    res_meta = await MetaOAuth.check_app_subscription(current_token, account.ig_user_id)
+
+    # Update account state based on verified status
+    status_val = res_meta.get("status", "UNKNOWN")
+    if status_val == "TOKEN_EXPIRED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_EXPIRED"
+        account.webhook_subscription_status = "FAILED"
+    elif status_val == "PERMISSION_DENIED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "PERMISSION_DENIED"
+        account.webhook_subscription_status = "FAILED"
+    elif res_meta.get("is_subscribed"):
+        account.webhook_subscription_status = "SUBSCRIBED"
+        account.webhook_subscribed_at = now
+        account.last_error_code = None
+    elif status_val == "NOT_SUBSCRIBED":
+        account.webhook_subscription_status = "NOT_SUBSCRIBED"
+
+    account.last_validated_at = now
+    await db.commit()
+
+    return WebhookSubscriptionStatusOut(
+        account_id=account.id,
+        ig_user_id=account.ig_user_id,
+        username=account.username,
+        is_subscribed=res_meta.get("is_subscribed", False),
+        subscribed_fields=res_meta.get("subscribed_fields", []),
+        status=status_val,
+        requires_reconnect=res_meta.get("requires_reconnect", False),
+        can_retry=res_meta.get("can_retry", True),
+        error_code=res_meta.get("error_code"),
+        error_message=res_meta.get("error_message"),
+        last_checked_at=now
+    )
+
+@router.post(
+    "/accounts/{account_id}/webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+@router.post(
+    "/accounts/{account_id}/webhook-subscription/retry",
+    response_model=WebhookSubscriptionStatusOut
+)
+@router.post(
+    "/accounts/{account_id}/retry-webhook-subscription",
+    response_model=WebhookSubscriptionStatusOut
+)
+async def retry_account_webhook_subscription(
+    account_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db)
+):
+    """
+    Retries/re-asserts account-level webhook subscription via POST /{ig_user_id}/subscribed_apps.
+    Idempotent, workspace-authorized, avoids forcing full reconnect unless Meta requires reauthorization.
+    """
+    stmt = select(InstagramAccount).where(
+        InstagramAccount.id == account_id,
+        _get_owner_filter(workspace, user)
+    )
+    res = await db.execute(stmt)
+    account = res.scalar_one_or_none()
+    if not account:
+        raise HTTPException(status_code=404, detail="Instagram account not found")
+
+    now = datetime.now(timezone.utc)
+    try:
+        current_token = decrypt_token(account.access_token_encrypted)
+    except Exception as e:
+        logger.error(f"Decryption failed for account {account.id}: {e}")
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_DECRYPTION_FAILED"
+        account.webhook_subscription_status = "FAILED"
+        await db.commit()
+        return WebhookSubscriptionStatusOut(
+            account_id=account.id,
+            ig_user_id=account.ig_user_id,
+            username=account.username,
+            is_subscribed=False,
+            subscribed_fields=[],
+            status="TOKEN_EXPIRED",
+            requires_reconnect=True,
+            can_retry=False,
+            error_code="TOKEN_DECRYPTION_FAILED",
+            error_message="Token decryption failed. Please reconnect your Instagram account.",
+            last_checked_at=now
+        )
+
+    res_meta = await MetaOAuth.subscribe_app_to_account(current_token, account.ig_user_id)
+
+    status_val = res_meta.get("status", "UNKNOWN")
+    if res_meta.get("is_subscribed"):
+        account.webhook_subscription_status = "SUBSCRIBED"
+        account.webhook_subscribed_at = now
+        account.connection_status = "CONNECTED"
+        account.last_error_code = None
+    elif status_val == "TOKEN_EXPIRED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "TOKEN_EXPIRED"
+        account.webhook_subscription_status = "FAILED"
+    elif status_val == "PERMISSION_DENIED":
+        account.connection_status = "REAUTHORIZATION_REQUIRED"
+        account.last_error_code = "PERMISSION_DENIED"
+        account.webhook_subscription_status = "FAILED"
+    else:
+        account.webhook_subscription_status = "FAILED"
+        account.last_error_code = res_meta.get("error_code")
+
+    account.last_validated_at = now
+    await db.commit()
+
+    return WebhookSubscriptionStatusOut(
+        account_id=account.id,
+        ig_user_id=account.ig_user_id,
+        username=account.username,
+        is_subscribed=res_meta.get("is_subscribed", False),
+        subscribed_fields=res_meta.get("subscribed_fields", []),
+        status=status_val,
+        requires_reconnect=res_meta.get("requires_reconnect", False),
+        can_retry=res_meta.get("can_retry", True),
+        error_code=res_meta.get("error_code"),
+        error_message=res_meta.get("error_message"),
+        last_checked_at=now
+    )
+

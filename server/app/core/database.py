@@ -24,7 +24,7 @@ def _is_service_reachable(url_str: str) -> bool:
         host = parsed.hostname or "localhost"
         port = parsed.port or 5432
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.3)
+        sock.settimeout(1.5)
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
@@ -47,6 +47,11 @@ def resolve_database_url(configured_url: str, environment: str) -> str:
     accidental SQLite fallback in production.
     """
     normalized = normalize_async_database_url(configured_url)
+    if environment == "production":
+        if not normalized or "sqlite" in normalized.lower() or not normalized.startswith("postgresql"):
+            raise ValueError("Production error: SQLite database fallback is strictly prohibited in production. A valid PostgreSQL URL is required.")
+        return normalized
+
     if environment == "development" and "postgresql" in normalized:
         parsed = urlparse(normalized.replace("postgresql+asyncpg://", "http://"))
         host = (parsed.hostname or "localhost").lower()
@@ -134,7 +139,9 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS connection_status VARCHAR(32) NOT NULL DEFAULT 'CONNECTED',
                 ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ,
                 ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ,
-                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64);
+                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64),
+                ADD COLUMN IF NOT EXISTS webhook_subscription_status VARCHAR(32) DEFAULT 'UNKNOWN',
+                ADD COLUMN IF NOT EXISTS webhook_subscribed_at TIMESTAMPTZ;
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
@@ -158,6 +165,10 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_refreshed_at TIMESTAMP"))
             if "last_error_code" not in existing_cols:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error_code TEXT"))
+            if "webhook_subscription_status" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscription_status TEXT DEFAULT 'UNKNOWN'"))
+            if "webhook_subscribed_at" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscribed_at TIMESTAMP"))
 
             res_c = await conn.execute(text("PRAGMA table_info(contacts)"))
             contact_cols = {row[1] for row in res_c.fetchall()}

@@ -26,6 +26,7 @@ interface CommentReplyFlowProps {
   accountName?: string;
   isSaving?: boolean;
   onPreviewChange?: (previewData: any) => void;
+  initialData?: any;
 }
 
 export function CommentReplyFlow({
@@ -34,9 +35,12 @@ export function CommentReplyFlow({
   accountName = 'yourbrand',
   isSaving = false,
   onPreviewChange,
+  initialData,
 }: CommentReplyFlowProps) {
   // 1. Post Selection State
-  const [selectedPostId, setSelectedPostId] = useState<string>('all');
+  const [selectedPostId, setSelectedPostId] = useState<string>(
+    initialData?.selectedPostId || initialData?.trigger?.selectedPostId || 'all'
+  );
   const [showAllPosts, setShowAllPosts] = useState(false);
   const [posts, setPosts] = useState<InstagramMediaItem[]>([]);
 
@@ -53,18 +57,41 @@ export function CommentReplyFlow({
   }, []);
 
   // 2. Reply to All State
-  const [replyToAll, setReplyToAll] = useState(false);
+  const [replyToAll, setReplyToAll] = useState(
+    initialData?.replyToAll ?? initialData?.trigger?.replyToAll ?? false
+  );
 
   // 3. Trigger Keywords State
   const [keywordInput, setKeywordInput] = useState('');
-  const [keywords, setKeywords] = useState<string[]>(['FREE', 'LINK', 'INFO', 'YES']);
+  const [keywords, setKeywords] = useState<string[]>(
+    initialData?.keywords || initialData?.trigger?.keywords || ['FREE', 'LINK', 'INFO', 'YES']
+  );
 
   // 4. AI-Powered Reply State
-  const [aiReplyEnabled, setAiReplyEnabled] = useState(false);
-  const [aiInstructions, setAiInstructions] = useState('Reply enthusiastically and encourage checking bio link.');
+  const [aiReplyEnabled, setAiReplyEnabled] = useState(
+    initialData?.aiReply?.enabled ?? false
+  );
+  const [aiInstructions, setAiInstructions] = useState(
+    initialData?.aiReply?.instructions || 'Reply enthusiastically and encourage checking bio link.'
+  );
 
   // 5. Public Comment Reply State
-  const [replyText, setReplyText] = useState('Thanks for your comment! 🙏 Check out the link in my bio for more info!');
+  const [replyText, setReplyText] = useState(
+    initialData?.publicReply?.text || initialData?.replyText || 'Thanks for your comment! 🙏 Check out the link in my bio for more info!'
+  );
+
+  useEffect(() => {
+    if (initialData) {
+      if (initialData.selectedPostId || initialData.trigger?.selectedPostId) {
+        setSelectedPostId(initialData.selectedPostId || initialData.trigger?.selectedPostId);
+      }
+      if (initialData.replyToAll !== undefined) setReplyToAll(initialData.replyToAll);
+      if (initialData.keywords) setKeywords(initialData.keywords);
+      if (initialData.aiReply?.enabled !== undefined) setAiReplyEnabled(initialData.aiReply.enabled);
+      if (initialData.aiReply?.instructions) setAiInstructions(initialData.aiReply.instructions);
+      if (initialData.publicReply?.text) setReplyText(initialData.publicReply.text);
+    }
+  }, [initialData]);
 
   // Synchronize Live Preview Setup
   React.useEffect(() => {

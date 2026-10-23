@@ -7,7 +7,7 @@ services:
       context: ./client
       dockerfile: ../infra/docker/client.Dockerfile
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - NEXT_PUBLIC_API_URL=http://localhost:8000/api
     depends_on:
@@ -20,7 +20,7 @@ services:
       context: ./server
       dockerfile: ../infra/docker/server.Dockerfile
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - ENVIRONMENT=${ENVIRONMENT:-development}
       - DATABASE_URL=postgresql+asyncpg://postgres:postgres@postgres:5432/comlina
@@ -59,7 +59,7 @@ services:
 
   # 4. PostgreSQL Database
   postgres:
-    image: postgres:16-alpine
+    image: postgres:16.4-alpine3.20
     ports:
       - "127.0.0.1:5432:5432"
     environment:
@@ -78,7 +78,7 @@ services:
 
   # 5. Redis Job Queue & Deduplication
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.5-alpine3.20
     ports:
       - "127.0.0.1:6379:6379"
     volumes:

@@ -173,8 +173,28 @@ class AutomationService:
             automation.name = data.name
         if data.description is not None:
             automation.description = data.description
+        if data.trigger_type is not None:
+            automation.trigger_type = data.trigger_type
+        if data.instagram_account_id is not None:
+            stmt_ig = select(InstagramAccount).where(
+                InstagramAccount.id == data.instagram_account_id,
+                InstagramAccount.workspace_id == workspace_id
+            )
+            res_ig = await db.execute(stmt_ig)
+            if not res_ig.scalar_one_or_none():
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail="Instagram account not found or does not belong to this workspace"
+                )
+            automation.instagram_account_id = data.instagram_account_id
         if data.status is not None:
             automation.status = data.status
+            if data.status == "ACTIVE" and not automation.published_at:
+                automation.published_at = datetime.utcnow()
+            if isinstance(automation.flow_definition, dict):
+                flow_copy = dict(automation.flow_definition)
+                flow_copy["status"] = data.status
+                automation.flow_definition = flow_copy
 
         await db.commit()
         await db.refresh(automation)

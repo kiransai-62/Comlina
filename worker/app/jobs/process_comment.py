@@ -8,6 +8,7 @@ from sqlalchemy import select, func
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
 from app.core.plans import get_plan_config
+from app.core.logging import log_diagnostic_event, redact_string
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
 from app.models import (
@@ -41,13 +42,13 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
     if webhook_event:
         webhook_event.status = status
         if error is not None:
-            webhook_event.error = error
+            webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
 async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Dict[str, Any]) -> Dict[str, Any]:
     """
-    ARQ job processing an incoming Instagram comment webhook event:
-    1. Resolves InstagramAccount and active Automations from PostgreSQL.
+    Job processing an incoming Instagram comment webhook event:
+    1. Resolves InstagramAccount and active Automations.
     2. Decrypts access token and initializes MetaGraphClient.
     3. Runs FlowEngine (Trigger -> Conditions -> Actions).
     4. Auto-creates or updates Contact and Conversation records.
@@ -83,7 +84,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 res_acc = await session.execute(stmt_acc)
                 account = res_acc.scalar_one_or_none()
 
-            # Strictly reject if account is not found - never fallback to arbitrary accounts
+            # Strictly reject if account is not found
             if not account:
                 logger.warning(
                     f"No matching InstagramAccount found for business_ig_id={business_ig_id}, "
@@ -91,8 +92,34 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 execution_summary["status"] = "IGNORED"
                 execution_summary["reason"] = "ACCOUNT_NOT_FOUND"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    error_code="ACCOUNT_NOT_FOUND",
+                    details={"status": "IGNORED", "reason": "ACCOUNT_NOT_FOUND"}
+                )
                 await _update_webhook_event(
                     session, event_id, event_data.get("provider_event_id"), "IGNORED", "No matching Instagram account found"
+                )
+                return execution_summary
+
+            # Defense-in-depth: Skip self-comment if commenter is the account itself
+            commenter_id = event_data.get("sender_id")
+            if commenter_id and account and str(commenter_id) == account.ig_user_id:
+                logger.info(f"Skipping self-comment for account {account.id} (commenter_id == ig_user_id == {commenter_id})")
+                execution_summary["status"] = "SKIPPED_SELF_EVENT"
+                execution_summary["reason"] = "SELF_EVENT_SKIPPED"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    details={"status": "SKIPPED_SELF_EVENT"}
+                )
+                await _update_webhook_event(
+                    session, event_id, event_data.get("provider_event_id"), "PROCESSED", "Self-comment skipped"
                 )
                 return execution_summary
 
@@ -117,18 +144,34 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
             res_auto = await session.execute(stmt_auto)
             automations: List[Automation] = list(res_auto.scalars().all())
 
-            # If no DB automations found, safely ignore event - never run hardcoded sample flows
             if not automations:
                 logger.info(f"No active automations found for account {account.id}. Ignoring event {event_id}.")
+                log_diagnostic_event(
+                    stage="automation_matched",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    error_code="NO_ACTIVE_AUTOMATIONS",
+                    details={"automations_found": 0}
+                )
                 execution_summary["status"] = "IGNORED"
                 execution_summary["reason"] = "NO_ACTIVE_AUTOMATIONS"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    details={"status": "IGNORED", "reason": "NO_ACTIVE_AUTOMATIONS"}
+                )
                 await _update_webhook_event(
                     session, event_id, event_data.get("provider_event_id"), "IGNORED", "No active automations found"
                 )
                 return execution_summary
 
-            # 2.5 Enforce Workspace Plan Quota & Limits
-            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id)
+            # 2.5 Enforce Workspace Plan Quota & Limits with row-level locks
+            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id).with_for_update()
             res_ws = await session.execute(stmt_ws)
             workspace = res_ws.scalar_one_or_none()
             tier = (workspace.plan_tier or "FREE").upper() if workspace else "FREE"
@@ -141,7 +184,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 stmt_post = select(PostUsage).where(
                     PostUsage.workspace_id == account.workspace_id,
                     PostUsage.media_id == media_id
-                )
+                ).with_for_update()
                 res_post = await session.execute(stmt_post)
                 post_usage = res_post.scalars().first()
 
@@ -208,16 +251,46 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 is_matched = res.get("status") in ("COMPLETED", "FALLBACK_EXECUTED")
                 if is_matched:
                     execution_summary["automations_matched"] += 1
+                log_diagnostic_event(
+                    stage="automation_matched",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    error_code=None if is_matched else "TRIGGER_MISMATCH",
+                    details={
+                        "automation_id": str(auto.id),
+                        "matched": is_matched,
+                        "trigger_type": auto.trigger_type,
+                        "flow_status": res.get("status")
+                    }
+                )
                 execution_summary["results"].append({"automation_id": str(auto.id), "result": res})
                 if res.get("processing_state"):
                     execution_summary["processing_state"] = res.get("processing_state")
                 if res.get("follower_verified") is not None:
                     execution_summary["follower_verified"] = res.get("follower_verified")
+                if res.get("follower_status"):
+                    execution_summary["follower_status"] = res.get("follower_status")
+                    event_data["follower_status"] = res.get("follower_status")
 
                 if is_matched:
                     action_results = res.get("results", [])
                     execution_summary["actions_executed"] += len(action_results)
                     for act_res in action_results:
+                        log_diagnostic_event(
+                            stage="instagram_api_result",
+                            correlation_id=event_data.get("provider_event_id") or event_id,
+                            event_type="COMMENT",
+                            workspace_id=str(account.workspace_id),
+                            account_id=str(account.id),
+                            http_status=200 if act_res.get("status") == "SUCCESS" else 400,
+                            error_code=None if act_res.get("status") == "SUCCESS" else str(act_res.get("error", "API_ERROR")),
+                            details={
+                                "action": act_res.get("action"),
+                                "status": act_res.get("status"),
+                            }
+                        )
                         if act_res.get("status") == "SUCCESS":
                             if act_res.get("action") == "PUBLIC_REPLY":
                                 auto.stats_comments = (auto.stats_comments or 0) + 1
@@ -276,7 +349,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                         contact.automation_state = "verification_pending"
                 await session.flush()
 
-            # 4. P1.6: Conversation and Message Auto-Creation
+            # 4. Conversation and Message Auto-Creation
             if account and contact:
                 stmt_conv = (
                     select(Conversation)
@@ -321,18 +394,30 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                             except (ValueError, TypeError):
                                 pass
 
-                            dm_msg = Message(
-                                workspace_id=account.workspace_id,
-                                conversation_id=conversation.id,
-                                sender_type="BOT",
-                                text=msg_text,
-                                meta_message_id=meta_msg_id,
-                                automation_id=auto_id_val,
-                                created_at=datetime.now(timezone.utc)
-                            )
-                            session.add(dm_msg)
+                            # Deduplicate bot message by meta_message_id if provided
+                            is_dup_bot_msg = False
+                            if meta_msg_id:
+                                stmt_dup_bot = select(Message.id).where(
+                                    Message.conversation_id == conversation.id,
+                                    Message.meta_message_id == meta_msg_id
+                                )
+                                res_dup_bot = await session.execute(stmt_dup_bot)
+                                if res_dup_bot.scalar_one_or_none():
+                                    is_dup_bot_msg = True
 
-            # 5. P1.7: Analytics Event Recording
+                            if not is_dup_bot_msg:
+                                dm_msg = Message(
+                                    workspace_id=account.workspace_id,
+                                    conversation_id=conversation.id,
+                                    sender_type="BOT",
+                                    text=msg_text,
+                                    meta_message_id=meta_msg_id,
+                                    automation_id=auto_id_val,
+                                    created_at=datetime.now(timezone.utc)
+                                )
+                                session.add(dm_msg)
+
+            # 5. Analytics Event Recording
             if account and execution_summary["actions_executed"] > 0:
                 first_auto_id = None
                 try:
@@ -358,15 +443,44 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 session.add(analytics_event)
 
-            # 6. P2.2: Update WebhookEvent status = PROCESSED
+            # 6. Update WebhookEvent status = PROCESSED
             await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "PROCESSED")
+
+            log_diagnostic_event(
+                stage="job_processed",
+                correlation_id=event_data.get("provider_event_id") or event_id,
+                event_type="COMMENT",
+                workspace_id=str(account.workspace_id),
+                account_id=str(account.id),
+                http_status=200,
+                details={
+                    "status": execution_summary["status"],
+                    "automations_matched": execution_summary["automations_matched"],
+                    "actions_executed": execution_summary["actions_executed"]
+                }
+            )
 
     except Exception as ex:
         logger.error(f"Error processing comment event {event_id}: {ex}", exc_info=True)
         execution_summary["status"] = "FAILED"
-        execution_summary["error"] = str(ex)
+        execution_summary["error"] = redact_string(str(ex))
+        meta_err = ex.to_diagnostic_dict() if hasattr(ex, "to_diagnostic_dict") else None
+        diag_details: Dict[str, Any] = {
+            "status": "FAILED",
+            "error": redact_string(str(ex))[:200]
+        }
+        if meta_err:
+            diag_details["meta_error"] = meta_err
 
-        # Attempt to mark WebhookEvent as FAILED
+        log_diagnostic_event(
+            stage="job_processed",
+            correlation_id=event_data.get("provider_event_id") or event_id,
+            event_type="COMMENT",
+            http_status=getattr(ex, "http_status", 500) or 500,
+            error_code=str(getattr(ex, "code", "JOB_FAILED")),
+            details=diag_details
+        )
+
         try:
             async with get_db_session() as fail_session:
                 await _update_webhook_event(fail_session, event_id, event_data.get("provider_event_id"), "FAILED", str(ex))

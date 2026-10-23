@@ -23,7 +23,7 @@ def _is_service_reachable(url_str: str) -> bool:
     try:
         parsed = urlparse(url_str.replace("postgresql+asyncpg://", "http://"))
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.3)
+        sock.settimeout(1.5)
         result = sock.connect_ex((parsed.hostname or "localhost", parsed.port or 5432))
         sock.close()
         return result == 0
@@ -33,6 +33,10 @@ def _is_service_reachable(url_str: str) -> bool:
 
 def resolve_database_url(configured_url: str, environment: str) -> str:
     """Resolve configured database URL, falling back to SQLite in development if PostgreSQL is unreachable."""
+    if environment == "production":
+        if not configured_url or "sqlite" in configured_url.lower() or not ("postgresql" in configured_url or "postgres" in configured_url):
+            raise ValueError("Production error: SQLite database fallback is strictly prohibited in production. A valid PostgreSQL URL is required.")
+        return configured_url
     if environment == "development" and "postgresql" in configured_url:
         parsed = urlparse(configured_url.replace("postgresql+asyncpg://", "http://").replace("postgresql://", "http://"))
         host = (parsed.hostname or "localhost").lower()

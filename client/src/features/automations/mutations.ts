@@ -1,7 +1,7 @@
-// client/features/automations/mutations.ts
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { automationsApi } from './api';
 import { automationsKeys } from './queries';
+import { AutomationItem, AutomationCreateInput, AutomationUpdateInput } from './types';
 import { useUIStore } from '@/stores/uiStore';
 
 export function useCreateAutomationMutation() {
@@ -9,7 +9,7 @@ export function useCreateAutomationMutation() {
   const showToast = useUIStore((s) => s.showToast);
 
   return useMutation({
-    mutationFn: automationsApi.create,
+    mutationFn: (data: AutomationCreateInput) => automationsApi.create(data),
     onSuccess: (newAuto) => {
       queryClient.invalidateQueries({ queryKey: automationsKeys.all });
       showToast(`Automation "${newAuto.name}" created!`);
@@ -26,6 +26,21 @@ export function usePublishAutomationMutation() {
     onSuccess: (updated) => {
       queryClient.invalidateQueries({ queryKey: automationsKeys.all });
       showToast(`Automation "${updated.name}" is now live (v${updated.version})!`);
+    },
+  });
+}
+
+export function useUpdateAutomationMutation() {
+  const queryClient = useQueryClient();
+
+  return useMutation({
+    mutationFn: ({ id, data }: { id: string; data: AutomationUpdateInput }) => automationsApi.update(id, data),
+    onSuccess: (updated) => {
+      queryClient.setQueryData<AutomationItem[]>(automationsKeys.all, (old) => {
+        if (!old) return [updated];
+        return old.map((item) => (item.id === updated.id ? { ...item, ...updated } : item));
+      });
+      queryClient.invalidateQueries({ queryKey: automationsKeys.all });
     },
   });
 }

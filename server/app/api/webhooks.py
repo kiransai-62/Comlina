@@ -4,9 +4,11 @@ import base64
 import hashlib
 import secrets
 import hmac
+import time
 import uuid
 from typing import Optional
 from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Depends, Form
+from app.core.replay_cache import replay_cache
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, delete
 from sqlalchemy.dialects.postgresql import insert as pg_insert
@@ -65,6 +67,7 @@ from arq.connections import RedisSettings
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import verify_meta_webhook_signature
+from app.core.logging import log_diagnostic_event
 from app.integrations.instagram.webhooks import InstagramWebhookParser
 from app.models import (WebhookEvent, InstagramAccount, Automation, AutomationVersion, Contact,
                         Conversation, Message, AnalyticsEvent)
@@ -130,7 +133,14 @@ async def simulate_comment(
 ):
     """
     Simulator endpoint to verify Comment -> Keyword Check -> DM -> Contact/Inbox/Analytics loop in one call.
+    Disabled in production and requires ENABLE_DEV_ROUTES in development.
     """
+    if settings.ENVIRONMENT == "production" or not settings.ENABLE_DEV_ROUTES:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Simulation endpoint is disabled in production and requires ENABLE_DEV_ROUTES."
+        )
+
     account = None
     if req.account_id:
         try:
@@ -208,13 +218,28 @@ async def receive_meta_webhook(
     5. Enqueue background processing job into Redis via ARQ or execute in-process.
     6. Return HTTP 200 OK (< 100ms) to Meta.
     """
+    corr_id = request.headers.get("x-request-id") or str(uuid.uuid4())
     signature_header = request.headers.get("X-Hub-Signature-256")
     body_bytes = await request.body()
 
     # 1. HMAC Verification (Strictly enforced in all environments)
     if not signature_header or not verify_meta_webhook_signature(body_bytes, signature_header):
+        log_diagnostic_event(
+            stage="webhook_received",
+            correlation_id=corr_id,
+            http_status=status.HTTP_403_FORBIDDEN,
+            error_code="SIGNATURE_MISMATCH",
+            details={"reason": "HMAC signature verification failed"}
+        )
         logger.error("HMAC signature verification failed for incoming webhook.")
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid signature")
+
+    log_diagnostic_event(
+        stage="webhook_received",
+        correlation_id=corr_id,
+        http_status=status.HTTP_200_OK,
+        details={"bytes": len(body_bytes)}
+    )
 
     try:
         payload = json.loads(body_bytes.decode("utf-8"))
@@ -239,6 +264,17 @@ async def receive_meta_webhook(
         event_type = evt["event_type"]
         business_ig_id = evt.get("business_ig_id")
 
+        log_diagnostic_event(
+            stage="event_parsed",
+            correlation_id=provider_id,
+            event_type=event_type,
+            details={
+                "provider_event_id": provider_id,
+                "media_id": evt.get("post_id"),
+                "comment_id": evt.get("comment_id")
+            }
+        )
+
         # Resolve workspace and account ID if possible
         workspace_id = None
         instagram_account_id = None
@@ -254,6 +290,22 @@ async def receive_meta_webhook(
                 instagram_account_id = acc.id
                 evt["workspace_id"] = str(workspace_id)
                 evt["instagram_account_id"] = str(instagram_account_id)
+                log_diagnostic_event(
+                    stage="account_matched",
+                    correlation_id=provider_id,
+                    event_type=event_type,
+                    workspace_id=str(workspace_id),
+                    account_id=str(instagram_account_id),
+                    details={"username": acc.username}
+                )
+            else:
+                log_diagnostic_event(
+                    stage="account_matched",
+                    correlation_id=provider_id,
+                    event_type=event_type,
+                    error_code="ACCOUNT_NOT_FOUND",
+                    details={"business_ig_id": business_ig_id}
+                )
 
         inserted_id = await _insert_webhook_event_idempotent(
             db, workspace_id, instagram_account_id, provider_id, event_type, evt
@@ -266,12 +318,37 @@ async def receive_meta_webhook(
                 try:
                     await redis_pool.enqueue_job("process_webhook_event", str(inserted_id), evt)
                     logger.info(f"Queued webhook event {provider_id} to ARQ worker.")
+                    log_diagnostic_event(
+                        stage="job_enqueued",
+                        correlation_id=provider_id,
+                        event_type=event_type,
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        account_id=str(instagram_account_id) if instagram_account_id else None,
+                        details={"queue": "redis_arq", "event_id": str(inserted_id)}
+                    )
                 except Exception as ex:
                     logger.error(f"Failed to enqueue to Redis ARQ: {ex}")
                     background_tasks.add_task(execute_webhook_event_inprocess, str(inserted_id), evt)
+                    log_diagnostic_event(
+                        stage="job_enqueued",
+                        correlation_id=provider_id,
+                        event_type=event_type,
+                        workspace_id=str(workspace_id) if workspace_id else None,
+                        account_id=str(instagram_account_id) if instagram_account_id else None,
+                        error_code="REDIS_ENQUEUE_FALLBACK",
+                        details={"queue": "in_process_fallback", "error": str(ex)}
+                    )
             else:
                 background_tasks.add_task(execute_webhook_event_inprocess, str(inserted_id), evt)
                 logger.info(f"Dispatched webhook event {provider_id} in-process via BackgroundTasks.")
+                log_diagnostic_event(
+                    stage="job_enqueued",
+                    correlation_id=provider_id,
+                    event_type=event_type,
+                    workspace_id=str(workspace_id) if workspace_id else None,
+                    account_id=str(instagram_account_id) if instagram_account_id else None,
+                    details={"queue": "in_process", "event_id": str(inserted_id)}
+                )
         else:
             # Duplicate event -> Already recorded in DB, ignore
             logger.info(f"Duplicate webhook event {provider_id} discarded by DB idempotency check.")
@@ -287,7 +364,12 @@ def _b64url_decode(value: str) -> bytes:
     return base64.urlsafe_b64decode(value + "=" * (-len(value) % 4))
 
 
-def parse_signed_request(signed_request: str, app_secret: str) -> dict:
+def parse_signed_request(
+    signed_request: str,
+    app_secret: str,
+    max_age_seconds: int = 900,
+    check_replay: bool = True
+) -> dict:
     if not app_secret:
         raise HTTPException(status_code=500, detail="META_APP_SECRET is not configured")
     try:
@@ -303,6 +385,57 @@ def parse_signed_request(signed_request: str, app_secret: str) -> dict:
         raise HTTPException(status_code=400, detail="Invalid signed_request signature")
     if not payload.get("user_id"):
         raise HTTPException(status_code=400, detail="signed_request has no user_id")
+
+    # TTL window check on issued_at timestamp
+    if "issued_at" in payload:
+        try:
+            issued_at = int(payload["issued_at"])
+            now = int(time.time())
+            if now - issued_at > max_age_seconds:
+                raise HTTPException(status_code=400, detail="signed_request has expired")
+            if issued_at > now + 300:
+                raise HTTPException(status_code=400, detail="signed_request timestamp is in the future")
+        except (ValueError, TypeError):
+            raise HTTPException(status_code=400, detail="Invalid issued_at timestamp in signed_request")
+
+    # Replay protection check
+    if check_replay:
+        sig_hash = hashlib.sha256(sig_b64.encode("utf-8")).hexdigest()
+        if not replay_cache.check_and_record_sync(sig_hash, ttl_seconds=max_age_seconds, namespace="signed_request"):
+            raise HTTPException(status_code=400, detail="signed_request has already been processed or replayed")
+
+    return payload
+
+
+async def verify_and_parse_signed_request(
+    signed_request: str,
+    app_secret: str,
+    max_age_seconds: int = 900
+) -> dict:
+    """
+    Asynchronously parses and verifies signed_request, enforcing signature, TTL window,
+    and distributed replay cache prevention using Redis (with in-memory fallback).
+    """
+    payload = parse_signed_request(
+        signed_request,
+        app_secret,
+        max_age_seconds=max_age_seconds,
+        check_replay=False
+    )
+    try:
+        sig_b64 = signed_request.split(".", 1)[0]
+        sig_hash = hashlib.sha256(sig_b64.encode("utf-8")).hexdigest()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Malformed signed_request")
+
+    is_fresh = await replay_cache.check_and_record(
+        sig_hash,
+        ttl_seconds=max_age_seconds,
+        namespace="signed_request"
+    )
+    if not is_fresh:
+        raise HTTPException(status_code=400, detail="signed_request has already been processed or replayed")
+
     return payload
 
 
@@ -313,7 +446,7 @@ async def _accounts_for(db: AsyncSession, ig_user_id: str):
 
 @router.post("/deauthorize")
 async def deauthorize_callback(signed_request: str = Form(...), db: AsyncSession = Depends(get_db)):
-    payload = parse_signed_request(signed_request, settings.META_APP_SECRET)
+    payload = await verify_and_parse_signed_request(signed_request, settings.META_APP_SECRET)
     for acc in await _accounts_for(db, payload["user_id"]):
         acc.is_active = False
         acc.access_token_encrypted = encrypt_token("REVOKED")
@@ -325,7 +458,7 @@ async def deauthorize_callback(signed_request: str = Form(...), db: AsyncSession
 
 @router.post("/data-deletion")
 async def data_deletion_callback(signed_request: str = Form(...), db: AsyncSession = Depends(get_db)):
-    payload = parse_signed_request(signed_request, settings.META_APP_SECRET)
+    payload = await verify_and_parse_signed_request(signed_request, settings.META_APP_SECRET)
     for acc in await _accounts_for(db, payload["user_id"]):
         conv_ids = select(Conversation.id).where(Conversation.instagram_account_id == acc.id)
         auto_ids = select(Automation.id).where(Automation.instagram_account_id == acc.id)
@@ -341,3 +474,4 @@ async def data_deletion_callback(signed_request: str = Form(...), db: AsyncSessi
     code = secrets.token_urlsafe(16)
     base = settings.META_REDIRECT_URI.split("/connect/")[0].rstrip("/")
     return {"url": f"{base}/data-deletion-status?code={code}", "confirmation_code": code}
+

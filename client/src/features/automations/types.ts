@@ -2,6 +2,23 @@
 
 export type AutomationStatus = 'DRAFT' | 'ACTIVE' | 'PAUSED' | 'ERROR' | 'ARCHIVED';
 
+export interface AutomationCreateInput {
+  name: string;
+  description?: string;
+  instagram_account_id: string;
+  trigger_type: string;
+  flow_definition: Record<string, any>;
+}
+
+export interface AutomationUpdateInput {
+  name?: string;
+  description?: string;
+  status?: AutomationStatus;
+  instagram_account_id?: string;
+  trigger_type?: string;
+  flow_definition?: Record<string, any>;
+}
+
 export interface AutomationItem {
   id: string;
   workspace_id?: string;

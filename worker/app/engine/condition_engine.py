@@ -27,12 +27,16 @@ class ConditionEngine:
             return False, fallback_action
 
         elif actual_follower_status == "NOT_FOLLOWING":
-            # Direct non-follower -> Trigger Follow Gate
+            # Verified non-follower -> Trigger Follow Gate
             return False, "SEND_FOLLOW_GATE"
 
-        elif actual_follower_status in ("UNKNOWN", "CHECK_UNAVAILABLE"):
-            # Safe degradation fallback
-            return False, fallback_action
+        elif actual_follower_status == "CHECK_UNAVAILABLE":
+            # Verification unavailable -> Distinct action override (never treat as NOT_FOLLOWING or FOLLOWING)
+            return False, condition_config.get("onUnavailableAction") or fallback_action
+
+        elif actual_follower_status == "UNKNOWN":
+            # Unknown status (e.g. missing IDs)
+            return False, condition_config.get("onUnknownAction") or fallback_action
 
         return False, fallback_action
 
