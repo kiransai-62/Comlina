@@ -18,7 +18,7 @@ from app.models import WebhookEvent
 
 def test_worker_meta_error_structured_fields_and_redaction():
     """Verify worker MetaGraphAPIError preserves structured fields and redacts secrets."""
-    raw_msg = "Error validating access token: EAABwc56s9876543210 with secret=super_secret_val"
+    raw_msg = "Error validating access token: EAABwc56s9876543210 with secret=mock_synthetic_secret_fixture"
     err = MetaGraphAPIError(
         message=raw_msg,
         code=190,
@@ -38,7 +38,7 @@ def test_worker_meta_error_structured_fields_and_redaction():
     assert err.fbtrace_id == "TraceWorker_123"
 
     assert "EAABwc56s9876543210" not in err.message
-    assert "super_secret_val" not in err.message
+    assert "mock_synthetic_secret_fixture" not in err.message
     assert "[REDACTED_META_TOKEN]" in err.message
     assert "secret=[REDACTED]" in err.message
 
