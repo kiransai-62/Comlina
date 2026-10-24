@@ -271,6 +271,7 @@ class PlanService:
         posts_remaining = (posts_limit - posts_used) if posts_limit != -1 else 999999
 
         return {
+            "workspace_id": str(workspace.id),
             "plan_tier": tier,
             "plan_name": cfg.get("name", "Free"),
             "plan_status": workspace.plan_status or "ACTIVE",

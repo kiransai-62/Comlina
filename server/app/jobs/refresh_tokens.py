@@ -8,6 +8,7 @@ from sqlalchemy import select
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token, encrypt_token
+from app.core.logging import redact_data
 from app.models import InstagramAccount
 
 logger = logging.getLogger("refresh_tokens")
@@ -43,12 +44,12 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                         continue
 
                 # Check Meta 24-hour refresh rule
-                if getattr(account, "last_refreshed_at", None):
-                    last_ref = account.last_refreshed_at
+                last_ref = getattr(account, "last_refreshed_at", None) or getattr(account, "connected_at", None)
+                if last_ref:
                     if last_ref.tzinfo is None:
                         last_ref = last_ref.replace(tzinfo=timezone.utc)
                     if curr_now - last_ref < timedelta(hours=24):
-                        logger.info("Account %s token refreshed less than 24h ago; skipping.", account.id)
+                        logger.info("Account %s token refreshed or connected less than 24h ago; skipping.", account.id)
                         continue
 
                 try:
@@ -61,26 +62,61 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                     continue
 
                 if resp.status_code == 200 and body.get("access_token"):
-                    account.access_token_encrypted = encrypt_token(body["access_token"])
+                    new_token = body["access_token"]
+                    account.access_token_encrypted = encrypt_token(new_token)
                     account.token_expires_at = curr_now + timedelta(seconds=body.get("expires_in", 5184000))
                     account.last_refreshed_at = curr_now
                     account.last_validated_at = curr_now
                     account.connection_status = "CONNECTED"
                     account.last_error_code = None
                     summary["refreshed"] += 1
-                elif (body.get("error") or {}).get("code") == 190 or "expired" in str(body).lower():
-                    account.connection_status = "REAUTHORIZATION_REQUIRED"
-                    account.last_error_code = "TOKEN_REVOKED"
-                    summary["deactivated"] += 1
+
+                    # F5: Re-subscribe to webhooks on token refresh so subscription stays healthy
+                    try:
+                        from app.integrations.instagram.oauth import MetaOAuth
+                        sub_res = await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+                        if sub_res.get("is_subscribed"):
+                            account.webhook_subscription_status = "SUBSCRIBED"
+                            account.webhook_subscribed_at = curr_now
+                        else:
+                            account.webhook_subscription_status = "FAILED"
+                    except Exception as sub_ex:
+                        logger.warning("Webhook re-subscription failed during refresh for %s: %s", account.id, sub_ex)
                 elif "24 hours" in str(body).lower():
                     account.last_refreshed_at = curr_now
                     account.last_validated_at = curr_now
+                elif (body.get("error") or {}).get("code") == 190 or "expired" in str(body).lower():
+                    # Sanity check with profile fetch before revoking connection
+                    is_token_alive = False
+                    try:
+                        p_resp = await client.get(
+                            "https://graph.instagram.com/me",
+                            params={"access_token": token, "fields": "id,username"}
+                        )
+                        p_body = p_resp.json()
+                        if p_resp.status_code == 200 and (p_body.get("id") or p_body.get("username")):
+                            is_token_alive = True
+                    except Exception:
+                        is_token_alive = False
+
+                    if is_token_alive:
+                        logger.info("Token refresh returned code 190, but profile check verified token is active for %s. Not revoking.", account.id)
+                        account.last_validated_at = curr_now
+                        continue
+
+                    account.connection_status = "REAUTHORIZATION_REQUIRED"
+                    account.last_error_code = "TOKEN_REVOKED"
+                    summary["deactivated"] += 1
                 else:
                     account.last_error_code = "REFRESH_FAILED"
                     summary["failed"] += 1
-                    logger.warning("Refresh rejected for %s: %s", account.id, body)
+                    logger.warning("Refresh rejected for %s: %s", account.id, redact_data(body))
 
         await session.commit()
 
     logger.info("Token refresh run completed: %s", summary)
     return summary
+
+
+# Alias for ARQ cron scheduler
+refresh_tokens_cron = refresh_expiring_tokens_job

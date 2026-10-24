@@ -115,20 +115,20 @@ services:
   # 6. Redis Queue & Cache (Optional if using Cloud Redis like Upstash / AWS ElastiCache)
   # ----------------------------------------------------------------------------
   redis:
-    image: redis:7-alpine
+    image: redis:7.2.5-alpine3.20
     container_name: comlina-redis
     command: >
       redis-server
       --save 60 1
       --maxmemory 512mb
       --maxmemory-policy volatile-lru
-      --requirepass ${REDIS_PASSWORD:-comlina_redis_secret}
+      --requirepass ${REDIS_PASSWORD:?REDIS_PASSWORD environment variable must be set in production}
     volumes:
       - redis_data:/data
     expose:
       - "6379"
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:-comlina_redis_secret}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD:?REDIS_PASSWORD is required}", "ping"]
       interval: 10s
       timeout: 5s
       retries: 5

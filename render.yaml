@@ -85,7 +85,7 @@ services:
     plan: starter
     region: oregon
     rootDir: worker
-    buildCommand: pip install -r requirements.txt
+    buildCommand: pip install -r requirements.txt -r ../server/requirements.txt
     startCommand: arq app.main.WorkerSettings
     autoDeploy: true
     envVars:

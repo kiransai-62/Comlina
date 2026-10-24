@@ -24,7 +24,7 @@ def _is_service_reachable(url_str: str) -> bool:
         host = parsed.hostname or "localhost"
         port = parsed.port or 5432
         sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(0.3)
+        sock.settimeout(1.5)
         result = sock.connect_ex((host, port))
         sock.close()
         return result == 0
@@ -47,6 +47,11 @@ def resolve_database_url(configured_url: str, environment: str) -> str:
     accidental SQLite fallback in production.
     """
     normalized = normalize_async_database_url(configured_url)
+    if environment == "production":
+        if not normalized or "sqlite" in normalized.lower() or not normalized.startswith("postgresql"):
+            raise ValueError("Production error: SQLite database fallback is strictly prohibited in production. A valid PostgreSQL URL is required.")
+        return normalized
+
     if environment == "development" and "postgresql" in normalized:
         parsed = urlparse(normalized.replace("postgresql+asyncpg://", "http://"))
         host = (parsed.hostname or "localhost").lower()
@@ -119,6 +124,7 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     class_=AsyncSession
 )
+SessionLocal = AsyncSessionLocal
 
 async def _apply_schema_patches(conn) -> None:
     """Idempotently add newly added columns across both PostgreSQL and SQLite without data loss."""
@@ -134,7 +140,9 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS connection_status VARCHAR(32) NOT NULL DEFAULT 'CONNECTED',
                 ADD COLUMN IF NOT EXISTS last_validated_at TIMESTAMPTZ,
                 ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ,
-                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64);
+                ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64),
+                ADD COLUMN IF NOT EXISTS webhook_subscription_status VARCHAR(32) DEFAULT 'UNKNOWN',
+                ADD COLUMN IF NOT EXISTS webhook_subscribed_at TIMESTAMPTZ;
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
@@ -143,6 +151,10 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS automation_state VARCHAR(64);
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_contacts_automation_state ON contacts(automation_state);"))
+            # F13 fix: dedicated password_hash column so profile updates cannot overwrite auth material
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(512);"))
+            await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 1;"))
+            await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;"))
         elif dialect_name == "sqlite":
             res = await conn.execute(text("PRAGMA table_info(instagram_accounts)"))
             existing_cols = {row[1] for row in res.fetchall()}
@@ -158,26 +170,38 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_refreshed_at TIMESTAMP"))
             if "last_error_code" not in existing_cols:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error_code TEXT"))
+            if "webhook_subscription_status" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscription_status TEXT DEFAULT 'UNKNOWN'"))
+            if "webhook_subscribed_at" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscribed_at TIMESTAMP"))
 
             res_c = await conn.execute(text("PRAGMA table_info(contacts)"))
             contact_cols = {row[1] for row in res_c.fetchall()}
             if "automation_state" not in contact_cols:
                 await conn.execute(text("ALTER TABLE contacts ADD COLUMN automation_state TEXT"))
+
+            # F13 fix: dedicated password_hash column so profile updates cannot overwrite auth material
+            res_u = await conn.execute(text("PRAGMA table_info(users)"))
+            user_cols = {row[1] for row in res_u.fetchall()}
+            if "password_hash" not in user_cols:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT"))
+
+            res_w = await conn.execute(text("PRAGMA table_info(webhook_events)"))
+            wh_cols = {row[1] for row in res_w.fetchall()}
+            if "attempt_count" not in wh_cols:
+                await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN attempt_count INTEGER DEFAULT 1"))
+            if "updated_at" not in wh_cols:
+                await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN updated_at TIMESTAMP"))
     except Exception as patch_err:
         logger.debug(f"[DB] Schema patch check notice: {patch_err}")
 
 _initialized = False
-_init_lock: Optional[asyncio.Lock] = None
 
 async def _ensure_db_initialized() -> None:
-    global _initialized, _init_lock
+    global _initialized
     if not _initialized:
-        if _init_lock is None:
-            _init_lock = asyncio.Lock()
-        async with _init_lock:
-            if not _initialized:
-                await init_db()
-                _initialized = True
+        await init_db()
+        _initialized = True
 
 async def init_db() -> None:
     """Ensure database tables exist and schema patches are applied."""

@@ -30,7 +30,7 @@ export function useInstagramConnection() {
     queryFn: () => instagramApi.listAccounts(),
     staleTime: 60_000,
     retry: 2,
-    enabled: statusData?.status === 'connected' || statusData?.status === 'token_expiring',
+    enabled: statusData?.status !== 'not_connected',
   });
 
   // Single source of truth state machine from backend connection-status

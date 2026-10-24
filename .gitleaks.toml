@@ -1,0 +1,12 @@
+# .gitleaks.toml
+# Comlina Secret Scanning Configuration
+# Narrow, documented allowlist for synthetic test fixtures asserting error redaction.
+
+[allowlist]
+description = "Allowlist synthetic test fixture asserting error redaction in worker unit tests"
+paths = [
+    '''worker/tests/test_worker_structured_errors_and_redaction\.py''',
+]
+stopwords = [
+    "super_secret_val",
+]

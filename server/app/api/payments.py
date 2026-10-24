@@ -302,19 +302,43 @@ async def razorpay_webhook(
     """
     Idempotent webhook handler for Razorpay asynchronous events.
     Handles payment.captured, order.paid, subscription.cancelled.
+
+    Security: HMAC-SHA256 signature verification is MANDATORY in production.
+    Requests missing the X-Razorpay-Signature header or failing verification
+    are rejected with HTTP 400 regardless of payload content.
     """
     body_bytes = await request.body()
 
-    # Webhook signature validation
-    if settings.RAZORPAY_WEBHOOK_SECRET and x_razorpay_signature:
+    # ── Mandatory signature verification ─────────────────────────────────────
+    # In production the webhook secret MUST be configured; reject outright if
+    # it is missing so a misconfigured deployment fails closed, not open.
+    is_production = settings.ENVIRONMENT == "production"
+    webhook_secret = settings.RAZORPAY_WEBHOOK_SECRET
+
+    if is_production and not webhook_secret:
+        logger.error(
+            "[RAZORPAY WEBHOOK] RAZORPAY_WEBHOOK_SECRET is not configured in production. "
+            "Rejecting request to prevent unauthenticated plan upgrades."
+        )
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Payment webhook is not properly configured. Contact support."
+        )
+
+    if not x_razorpay_signature:
+        logger.warning("[RAZORPAY WEBHOOK] Request missing X-Razorpay-Signature header — rejected.")
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Missing webhook signature")
+
+    if webhook_secret:
         expected_sig = hmac.new(
-            settings.RAZORPAY_WEBHOOK_SECRET.encode("utf-8"),
+            webhook_secret.encode("utf-8"),
             body_bytes,
             hashlib.sha256
         ).hexdigest()
         if not hmac.compare_digest(expected_sig, x_razorpay_signature):
-            logger.warning("[RAZORPAY WEBHOOK] Invalid signature received.")
+            logger.warning("[RAZORPAY WEBHOOK] Invalid HMAC signature — request rejected.")
             raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Invalid webhook signature")
+    # ─────────────────────────────────────────────────────────────────────────
 
     try:
         payload = json.loads(body_bytes.decode("utf-8"))
@@ -348,17 +372,40 @@ async def razorpay_webhook(
         notes = payment_entity.get("notes", {})
         workspace_id_str = notes.get("workspace_id")
 
-        if workspace_id_str:
+        if workspace_id_str and order_id:
             try:
                 ws_uuid = uuid.UUID(workspace_id_str)
-                stmt_ws = select(Workspace).where(Workspace.id == ws_uuid)
-                ws = (await db.execute(stmt_ws)).scalars().first()
-                if ws:
-                    target_plan = notes.get("plan_tier", "PREMIUM").upper()
-                    ws.plan_tier = target_plan
-                    ws.plan_status = "ACTIVE"
-                    ws.updated_at = datetime.now(timezone.utc)
-                    logger.info(f"[RAZORPAY WEBHOOK] Activated {target_plan} for workspace {ws.id}")
+                # Derive the plan tier from the verified PaymentOrder record stored at
+                # order-creation time — never from the attacker-controlled payload notes.
+                stmt_order = select(PaymentOrder).where(
+                    PaymentOrder.razorpay_order_id == order_id,
+                    PaymentOrder.workspace_id == ws_uuid,
+                )
+                payment_order = (await db.execute(stmt_order)).scalars().first()
+
+                if not payment_order:
+                    logger.error(
+                        f"[RAZORPAY WEBHOOK] No PaymentOrder found for order_id={order_id}, "
+                        f"workspace_id={workspace_id_str}. Plan upgrade blocked."
+                    )
+                else:
+                    # Update the PaymentOrder record
+                    payment_order.razorpay_payment_id = payment_entity.get("id")
+                    payment_order.status = "PAID"
+                    payment_order.updated_at = datetime.now(timezone.utc)
+
+                    stmt_ws = select(Workspace).where(Workspace.id == ws_uuid)
+                    ws = (await db.execute(stmt_ws)).scalars().first()
+                    if ws:
+                        # Use server-authoritative plan_tier from the DB record
+                        target_plan = payment_order.plan_tier.upper()
+                        ws.plan_tier = target_plan
+                        ws.plan_status = "ACTIVE"
+                        ws.updated_at = datetime.now(timezone.utc)
+                        logger.info(
+                            f"[RAZORPAY WEBHOOK] Activated {target_plan} for workspace {ws.id} "
+                            f"via verified order {order_id}."
+                        )
             except Exception as e:
                 logger.error(f"[RAZORPAY WEBHOOK] Failed to update workspace: {e}")
 
@@ -382,42 +429,43 @@ async def razorpay_webhook(
     return {"status": "success", "event": event_type}
 
 
-@router.post("/dev/switch-plan")
-async def dev_switch_plan(
-    body: PlanSwitchRequest,
-    workspace: Workspace = Depends(get_current_workspace),
-    db: AsyncSession = Depends(get_db)
-) -> Dict[str, Any]:
-    """
-    Developer convenience endpoint to instantly switch workspace plan tier
-    for testing Free, Premium, and Pro feature access.
-    """
-    tier_str = body.plan_tier.strip().upper()
-    if tier_str not in (PlanTier.FREE.value, PlanTier.PREMIUM.value, PlanTier.PRO.value):
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail=f"Invalid tier '{tier_str}'. Supported tiers: FREE, PREMIUM, PRO"
-        )
+if settings.ENVIRONMENT == "development" and settings.ENABLE_DEV_ROUTES:
+    @router.post("/dev/switch-plan")
+    async def dev_switch_plan(
+        body: PlanSwitchRequest,
+        workspace: Workspace = Depends(get_current_workspace),
+        db: AsyncSession = Depends(get_db)
+    ) -> Dict[str, Any]:
+        """
+        Developer convenience endpoint to instantly switch workspace plan tier
+        for testing Free, Premium, and Pro feature access.
+        """
+        tier_str = body.plan_tier.strip().upper()
+        if tier_str not in (PlanTier.FREE.value, PlanTier.PREMIUM.value, PlanTier.PRO.value):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Invalid tier '{tier_str}'. Supported tiers: FREE, PREMIUM, PRO"
+            )
 
-    ws = await db.get(Workspace, workspace.id)
-    if ws:
-        ws.plan_tier = tier_str
-        ws.plan_status = "ACTIVE"
-        ws.updated_at = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(ws)
-        workspace = ws
-    else:
-        workspace.plan_tier = tier_str
-        workspace.plan_status = "ACTIVE"
-        workspace.updated_at = datetime.now(timezone.utc)
-        await db.commit()
+        ws = await db.get(Workspace, workspace.id)
+        if ws:
+            ws.plan_tier = tier_str
+            ws.plan_status = "ACTIVE"
+            ws.updated_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(ws)
+            workspace = ws
+        else:
+            workspace.plan_tier = tier_str
+            workspace.plan_status = "ACTIVE"
+            workspace.updated_at = datetime.now(timezone.utc)
+            await db.commit()
 
-    logger.info(f"[DEV] Switched workspace {workspace.id} plan tier to {tier_str}")
+        logger.info(f"[DEV] Switched workspace {workspace.id} plan tier to {tier_str}")
 
-    return {
-        "success": True,
-        "plan_tier": workspace.plan_tier,
-        "plan_status": workspace.plan_status,
-        "message": f"Workspace plan set to {tier_str}."
-    }
+        return {
+            "success": True,
+            "plan_tier": workspace.plan_tier,
+            "plan_status": workspace.plan_status,
+            "message": f"Workspace plan set to {tier_str}."
+        }

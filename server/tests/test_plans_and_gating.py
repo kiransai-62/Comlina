@@ -220,6 +220,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "COMMENT_TO_LEAD",
     })
     assert valid is False
+    assert err is not None
     assert "Create Lead Flow requires a Pro plan" in err
 
     valid, err = PlanService.validate_automation_features(premium_ws, {
@@ -227,6 +228,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "DM_REPLY",
     })
     assert valid is False
+    assert err is not None
     assert "DM Reply Flow requires a Pro plan" in err
 
     valid, err = PlanService.validate_automation_features(premium_ws, {
@@ -234,6 +236,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "DM_TO_LEAD",
     })
     assert valid is False
+    assert err is not None
     assert "DM to Lead Collection requires a Pro plan" in err
 
     # Everything succeeds on Pro
@@ -457,7 +460,9 @@ async def test_razorpay_order_and_signature_verification():
 
 @pytest.mark.asyncio
 async def test_razorpay_webhook_idempotency():
-    """Ensure webhook updates subscription idempotently and ignores duplicate events."""
+    """Ensure webhook updates subscription idempotently and ignores duplicate events.
+    Enforces F2 security: plan comes strictly from stored PaymentOrder, never from notes.
+    """
     await init_db()
     async with get_db_session() as session:
         ws_id = uuid.uuid4()
@@ -468,6 +473,19 @@ async def test_razorpay_webhook_idempotency():
             plan_tier=PlanTier.PREMIUM.value,
         )
         session.add(workspace)
+
+        # Seed matching order to verify plan tier extraction from DB, not payload notes
+        order_id = f"order_{uuid.uuid4().hex[:10]}"
+        payment_order = PaymentOrder(
+            id=uuid.uuid4(),
+            workspace_id=ws_id,
+            plan_tier="PRO",
+            amount_paise=39900,
+            currency="INR",
+            razorpay_order_id=order_id,
+            status="CREATED"
+        )
+        session.add(payment_order)
         await session.commit()
 
         client = TestClient(app)
@@ -482,9 +500,10 @@ async def test_razorpay_webhook_idempotency():
                 "payment": {
                     "entity": {
                         "id": event_id,
+                        "order_id": order_id,
                         "notes": {
                             "workspace_id": str(ws_id),
-                            "plan_tier": "PRO"
+                            "plan_tier": "ENTERPRISE"  # Malicious attempt in notes: must be IGNORED in favor of DB order
                         }
                     }
                 }
@@ -497,7 +516,56 @@ async def test_razorpay_webhook_idempotency():
             hashlib.sha256
         ).hexdigest()
 
-        # First webhook delivery: upgrades workspace to PRO
+        # Negative 1: Unsigned webhook must return 400
+        res_unsigned = client.post(
+            "/api/payments/razorpay/webhook",
+            content=body_bytes,
+            headers={
+                "x-razorpay-event-id": event_id,
+                "content-type": "application/json"
+            }
+        )
+        assert res_unsigned.status_code == 400
+        assert "signature" in res_unsigned.json().get("detail", "").lower()
+
+        # Negative 2: Signed webhook with no matching order in DB -> no upgrade
+        bad_order_payload = {
+            "entity": "event",
+            "account_id": "acc_123",
+            "event": "payment.captured",
+            "contains": ["payment"],
+            "payload": {
+                "payment": {
+                    "entity": {
+                        "id": f"evt_bad_{uuid.uuid4().hex[:8]}",
+                        "order_id": "order_nonexistent_999",
+                        "notes": {
+                            "workspace_id": str(ws_id),
+                            "plan_tier": "ENTERPRISE"
+                        }
+                    }
+                }
+            }
+        }
+        bad_order_bytes = json.dumps(bad_order_payload).encode("utf-8")
+        bad_order_sig = hmac.new(
+            settings.RAZORPAY_WEBHOOK_SECRET.encode("utf-8"),
+            bad_order_bytes,
+            hashlib.sha256
+        ).hexdigest()
+        res_no_order = client.post(
+            "/api/payments/razorpay/webhook",
+            content=bad_order_bytes,
+            headers={
+                "x-razorpay-signature": bad_order_sig,
+                "content-type": "application/json"
+            }
+        )
+        assert res_no_order.status_code == 200
+        await session.refresh(workspace)
+        assert workspace.plan_tier == PlanTier.PREMIUM.value  # NOT upgraded to ENTERPRISE!
+
+        # Positive: Signed webhook delivery with valid order: upgrades workspace to PRO (from DB order, NOT ENTERPRISE from notes)
         res1 = client.post(
             "/api/payments/razorpay/webhook",
             content=body_bytes,

@@ -1,9 +1,9 @@
 # server/app/engine/flow_engine.py
 import logging
 from typing import Dict, Any, List, Optional
-from app.engine.trigger_engine import TriggerEngine
-from app.engine.condition_engine import ConditionEngine
-from app.engine.action_engine import ActionEngine
+from .trigger_engine import TriggerEngine
+from .condition_engine import ConditionEngine
+from .action_engine import ActionEngine
 from app.integrations.instagram.follower_status import InstagramFollowerService
 
 logger = logging.getLogger("flow_engine")
@@ -29,9 +29,12 @@ class FlowEngine:
                 "type": "FOLLOWER_STATUS",
                 "expected": "FOLLOWING",
                 "fallbackAction": "SEND_FOLLOW_GATE",
+                "onUnavailableAction": ask_follow.get("onUnavailableAction", "HANDLE_CHECK_UNAVAILABLE"),
+                "onUnknownAction": ask_follow.get("onUnknownAction", "HANDLE_UNKNOWN"),
                 "message": ask_follow.get("message"),
                 "retryMessage": ask_follow.get("retryMessage"),
                 "successMessage": ask_follow.get("successMessage"),
+                "unavailableMessage": ask_follow.get("unavailableMessage") or ask_follow.get("fallbackMessage"),
                 "buttonLabel": ask_follow.get("buttonLabel", "Follow"),
             })
         return conditions
@@ -141,26 +144,42 @@ class FlowEngine:
                     event_data["follower_status_reason"] = follower_reason
                 else:
                     follower_status = "UNKNOWN"
+                    event_data["follower_status"] = "UNKNOWN"
+                    event_data["follower_status_reason"] = "Missing business or sender ID"
             elif not follower_status:
                 follower_status = "UNKNOWN"
+                event_data["follower_status"] = "UNKNOWN"
+                event_data["follower_status_reason"] = "No follower status provided"
 
             follower_cond = next(c for c in conditions if c.get("type") == "FOLLOWER_STATUS")
             passed, fallback = ConditionEngine.evaluate_condition(follower_cond, event_data)
 
             if not passed:
-                # User does not follow or follower verification is unavailable at comment time
                 logger.info(f"Follower condition not met ({follower_status}). Executing fallback: {fallback}")
-                init_state = "verification_unavailable" if follower_status == "CHECK_UNAVAILABLE" else "follow_required"
 
-                follow_gate_msg = (
-                    follower_cond.get("message")
-                    or f"Thanks for your comment! Please follow @{account_username} first so we can send you the direct download link 🚀"
-                )
+                if follower_status == "NOT_FOLLOWING":
+                    init_state = "follow_required"
+                    gate_msg = (
+                        follower_cond.get("message")
+                        or f"Thanks for your comment! Please follow @{account_username} first so we can send you the direct download link 🚀"
+                    )
+                elif follower_status == "CHECK_UNAVAILABLE":
+                    init_state = "verification_unavailable"
+                    gate_msg = (
+                        follower_cond.get("unavailableMessage")
+                        or f"Thanks for your comment! We couldn't verify your follow status automatically. Follow @{account_username} and tap below so we can verify and send your link 🚀"
+                    )
+                else:  # UNKNOWN
+                    init_state = "unknown_status"
+                    gate_msg = (
+                        follower_cond.get("unknownMessage")
+                        or f"Thanks for your comment! To receive your link, Follow @{account_username} and tap below 🚀"
+                    )
 
                 # Send creator's customized Ask to Follow DM with profile link button & recheck button
                 follow_gate_action = {
                     "type": "PRIVATE_DM",
-                    "text": follow_gate_msg,
+                    "text": gate_msg,
                     "buttons": [
                         {
                             "label": f"Follow @{account_username}"[:20],
@@ -190,7 +209,8 @@ class FlowEngine:
                         "buttons": dm_action.get("buttons") if dm_action else [],
                         "retry_message": follower_cond.get("retryMessage"),
                         "account_username": account_username,
-                        "business_ig_id": event_data.get("business_ig_id")
+                        "business_ig_id": event_data.get("business_ig_id"),
+                        "verification_status": follower_status
                     }
                     return {
                         "status": "FALLBACK_EXECUTED",
@@ -198,6 +218,7 @@ class FlowEngine:
                         "prior_state": current_state,
                         "initial_state": init_state,
                         "follower_verified": False,
+                        "follower_status": follower_status,
                         "pending_delivery": pending_delivery,
                         "results": results
                     }
@@ -208,6 +229,7 @@ class FlowEngine:
                         "status": "COMPLETED",
                         "processing_state": "failed",
                         "follower_verified": False,
+                        "follower_status": follower_status,
                         "error": dm_res.get("error", "Follow gate DM delivery failed"),
                         "results": results
                     }
@@ -231,6 +253,7 @@ class FlowEngine:
                     "status": "COMPLETED",
                     "processing_state": current_state,
                     "follower_verified": True,
+                    "follower_status": "FOLLOWING" if has_follower_cond else event_data.get("follower_status", "UNKNOWN"),
                     "results": results
                 }
             else:
@@ -240,6 +263,7 @@ class FlowEngine:
                     "status": "COMPLETED",
                     "processing_state": "failed",
                     "follower_verified": True,
+                    "follower_status": "FOLLOWING" if has_follower_cond else event_data.get("follower_status", "UNKNOWN"),
                     "error": dm_res.get("error", "Protected resource DM delivery failed"),
                     "results": results
                 }

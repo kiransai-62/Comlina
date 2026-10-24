@@ -73,7 +73,10 @@ async def test_run_flow_v2_studio_playbook():
         "sender_username": "sarah",
         "text": "Please share the AI template"
     }
-    res = await FlowEngine.run_flow(playbook, event)
+    from unittest.mock import AsyncMock
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value={"message_id": "mid_123", "id": "rep_123"})
+    res = await FlowEngine.run_flow(playbook, event, instagram_client=mock_client)
     assert res["status"] == "COMPLETED"
     assert len(res["results"]) == 2
     assert res["results"][0]["action"] == "PUBLIC_REPLY"

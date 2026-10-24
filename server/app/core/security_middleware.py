@@ -1,12 +1,21 @@
-# server/app/core/security_middleware.py
 import re
 import time
 import uuid
+import hashlib
 import logging
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 from starlette.middleware.base import BaseHTTPMiddleware, RequestResponseEndpoint
 from starlette.requests import Request
 from starlette.responses import Response, JSONResponse
+
+from app.core.config import settings
+from app.core.rate_limiter import (
+    rate_limiter,
+    RateLimitUnavailableError,
+    is_sensitive_path,
+    get_route_tag,
+    get_limits_for_route,
+)
 
 logger = logging.getLogger("security")
 
@@ -28,25 +37,27 @@ BOT_REGEX = re.compile(
     re.IGNORECASE
 )
 
-# In-memory sliding window rate limiter
-# Key: client_ip -> (request_count, window_start_timestamp)
-rate_limit_cache: Dict[str, Tuple[int, float]] = {}
-_last_cache_cleanup: float = time.time()
-
-def _cleanup_rate_limit_cache(now: float, ttl: float = 60.0):
-    global _last_cache_cleanup
-    if now - _last_cache_cleanup > 30.0 or len(rate_limit_cache) > 2000:
-        stale_keys = [k for k, v in rate_limit_cache.items() if now - v[1] > ttl]
-        for k in stale_keys:
-            rate_limit_cache.pop(k, None)
-        _last_cache_cleanup = now
-
 def get_client_ip(request: Request) -> str:
     """
-    Extract real client IP securely.
-    Prioritizes headers populated by trusted reverse proxies (X-Real-IP, CF-Connecting-IP)
-    over X-Forwarded-For to prevent client spoofing.
+    Extract real client IP securely respecting settings.TRUSTED_PROXY_COUNT.
+    If TRUSTED_PROXY_COUNT <= 0, proxy headers (X-Forwarded-For, X-Real-IP, CF-Connecting-IP)
+    are untrusted and client.host is returned directly to prevent client IP spoofing.
+    If TRUSTED_PROXY_COUNT > 0, the IP at index [-TRUSTED_PROXY_COUNT] in X-Forwarded-For
+    is used as the verified client IP.
     """
+    trusted_count = getattr(settings, "TRUSTED_PROXY_COUNT", 0)
+
+    if trusted_count <= 0:
+        return request.client.host if request.client else "127.0.0.1"
+
+    forwarded = request.headers.get("x-forwarded-for")
+    if forwarded:
+        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
+        if len(parts) >= trusted_count:
+            return parts[-trusted_count]
+        elif parts:
+            return parts[0]
+
     real_ip = request.headers.get("x-real-ip")
     if real_ip:
         return real_ip.strip()
@@ -54,13 +65,6 @@ def get_client_ip(request: Request) -> str:
     cf_ip = request.headers.get("cf-connecting-ip")
     if cf_ip:
         return cf_ip.strip()
-
-    forwarded = request.headers.get("x-forwarded-for")
-    if forwarded:
-        parts = [p.strip() for p in forwarded.split(",") if p.strip()]
-        if parts:
-            # Use rightmost IP added by proxy, avoiding client-prepended spoofed entries
-            return parts[-1]
 
     return request.client.host if request.client else "127.0.0.1"
 
@@ -71,8 +75,29 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         request_id = request.headers.get("x-request-id") or str(uuid.uuid4())
         request.state.request_id = request_id
+        client_ip = get_client_ip(request)
+        workspace_id = request.headers.get("x-workspace-id")
 
-        response = await call_next(request)
+        from app.core.logging import set_log_context, clear_log_context
+        set_log_context(request_id=request_id, client_ip=client_ip, workspace_id=workspace_id)
+
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            logger.error(
+                f"[SECURITY UNHANDLED EXCEPTION] RequestId={request_id} Path={request.url.path} Error={exc}",
+                exc_info=True
+            )
+            response = JSONResponse(
+                status_code=500,
+                content={
+                    "error": "Internal Server Error",
+                    "message": "An unexpected error occurred. Please try again later.",
+                    "request_id": request_id
+                }
+            )
+        finally:
+            clear_log_context()
 
         response.headers["x-request-id"] = request_id
         response.headers["X-Content-Type-Options"] = "nosniff"
@@ -80,7 +105,8 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
         response.headers["X-XSS-Protection"] = "1; mode=block"
         response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
         response.headers["Permissions-Policy"] = "camera=(), microphone=(), geolocation=(), usb=()"
-        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+        if settings.ENVIRONMENT == "production":
+            response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
         response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
         response.headers["Cross-Origin-Opener-Policy"] = "same-origin"
         response.headers["Cross-Origin-Resource-Policy"] = "cross-origin"
@@ -152,7 +178,11 @@ class AttackFilterMiddleware(BaseHTTPMiddleware):
 
 
 class ApiRateLimitMiddleware(BaseHTTPMiddleware):
-    """Sliding-window IP rate limiter to protect backend endpoints against brute force and DoS."""
+    """
+    Multi-tenant rate limiting middleware using atomic Redis backend with trusted proxy support.
+    Enforces per-IP, per-user, and per-workspace rate limits with 429 Retry-After headers.
+    Fails closed on sensitive routes (auth, oauth, messaging) when Redis is down.
+    """
 
     async def dispatch(self, request: Request, call_next: RequestResponseEndpoint) -> Response:
         path = request.url.path
@@ -162,23 +192,25 @@ class ApiRateLimitMiddleware(BaseHTTPMiddleware):
             return await call_next(request)
 
         client_ip = get_client_ip(request)
-        now = time.time()
-        _cleanup_rate_limit_cache(now)
-        window_seconds = 10.0
+        is_sensitive = is_sensitive_path(path)
+        fail_closed = is_sensitive and (
+            settings.ENVIRONMENT == "production" or getattr(settings, "FAIL_CLOSED_ON_REDIS_DOWN", False)
+        )
 
-        # Webhook endpoint permits higher burst from Meta servers (300 req / 10s)
-        # General API endpoints permit 120 req / 10s
-        limit = 300 if "/webhooks/" in path else 120
+        try:
+            tag = get_route_tag(path)
+            limit, window = get_limits_for_route(path)
 
-        count, window_start = rate_limit_cache.get(client_ip, (0, now))
-
-        if now - window_start > window_seconds:
-            # Window expired, reset
-            rate_limit_cache[client_ip] = (1, now)
-        else:
-            if count >= limit:
-                retry_after = int(window_seconds - (now - window_start)) + 1
-                logger.warning(f"[SECURITY BLOCKED: RATE_LIMIT] IP={client_ip} Count={count} Path={path}")
+            # 1. Per-IP rate limit check
+            allowed, retry_after = await rate_limiter.check_ip(
+                ip=client_ip,
+                route_tag=tag,
+                limit=limit,
+                window=window,
+                fail_closed=fail_closed
+            )
+            if not allowed:
+                logger.warning(f"[SECURITY BLOCKED: RATE_LIMIT_IP] IP={client_ip} Path={path}")
                 return JSONResponse(
                     status_code=429,
                     content={
@@ -188,6 +220,62 @@ class ApiRateLimitMiddleware(BaseHTTPMiddleware):
                     },
                     headers={"Retry-After": str(retry_after)}
                 )
-            rate_limit_cache[client_ip] = (count + 1, window_start)
+
+            # 2. Per-Workspace rate limit check if X-Workspace-ID header is present
+            ws_id = request.headers.get("x-workspace-id")
+            if ws_id:
+                ws_allowed, ws_retry = await rate_limiter.check_workspace(
+                    workspace_id=ws_id,
+                    route_tag=tag,
+                    limit=200,
+                    window=60,
+                    fail_closed=fail_closed
+                )
+                if not ws_allowed:
+                    logger.warning(f"[SECURITY BLOCKED: RATE_LIMIT_WORKSPACE] WS={ws_id} Path={path}")
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "Too Many Requests",
+                            "message": "Workspace rate limit exceeded. Please wait before retrying.",
+                            "retry_after_seconds": ws_retry
+                        },
+                        headers={"Retry-After": str(ws_retry)}
+                    )
+
+            # 3. Per-User rate limit check if Authorization Bearer token is present
+            auth_header = request.headers.get("authorization")
+            if auth_header and auth_header.startswith("Bearer "):
+                token = auth_header.split(" ", 1)[1].strip()
+                user_key = hashlib.sha256(token.encode("utf-8")).hexdigest()[:16]
+                user_allowed, user_retry = await rate_limiter.check_user(
+                    user_id=user_key,
+                    route_tag=tag,
+                    limit=120,
+                    window=60,
+                    fail_closed=fail_closed
+                )
+                if not user_allowed:
+                    logger.warning(f"[SECURITY BLOCKED: RATE_LIMIT_USER] UserKey={user_key} Path={path}")
+                    return JSONResponse(
+                        status_code=429,
+                        content={
+                            "error": "Too Many Requests",
+                            "message": "User rate limit exceeded. Please wait before retrying.",
+                            "retry_after_seconds": user_retry
+                        },
+                        headers={"Retry-After": str(user_retry)}
+                    )
+
+        except RateLimitUnavailableError:
+            logger.error(f"[SECURITY FAIL_CLOSED] Rate limiter unavailable for sensitive route: {path}")
+            return JSONResponse(
+                status_code=503,
+                content={
+                    "error": "Service Unavailable",
+                    "message": "Security rate limiting service is temporarily unavailable. Request blocked."
+                },
+                headers={"Retry-After": "5"}
+            )
 
         return await call_next(request)

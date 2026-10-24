@@ -1,11 +1,16 @@
 # Prevent secrets, local databases, build artifacts and dependencies from leaking into Docker images
 .env
 .env.*
+!.env.example
 **/.env
 **/.env.*
+!**/.env.example
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
+*.tsbuildinfo
+e2e_artifacts
 .git
 .gitignore
 node_modules

@@ -94,6 +94,7 @@ export default function InstagramAccountsPage() {
   };
 
   const [syncingId, setSyncingId] = useState<string | null>(null);
+  const [verifyingWebhookId, setVerifyingWebhookId] = useState<string | null>(null);
 
   const handleSync = async (id: string) => {
     setSyncingId(id);
@@ -105,6 +106,25 @@ export default function InstagramAccountsPage() {
       showToast(`Failed to sync account: ${err.message || err}`);
     } finally {
       setSyncingId(null);
+    }
+  };
+
+  const handleVerifyWebhooks = async (id: string) => {
+    setVerifyingWebhookId(id);
+    try {
+      const res = await instagramApi.retryWebhookSubscription(id);
+      if (res.is_subscribed) {
+        showToast('Webhook subscription verified active on Meta (comments, messages).');
+      } else if (res.requires_reconnect) {
+        showToast(`Meta requires account reconnection: ${res.error_message || res.status}`);
+      } else {
+        showToast(`Webhook subscription notice: ${res.error_message || res.status}`);
+      }
+      refetch();
+    } catch (err: any) {
+      showToast(`Failed to verify webhook subscription: ${err.message || err}`);
+    } finally {
+      setVerifyingWebhookId(null);
     }
   };
 
@@ -276,6 +296,16 @@ export default function InstagramAccountsPage() {
                         ) : (
                           <span className="text-[#DC2626] font-medium">Inactive (Meta authorization expired or revoked)</span>
                         )}
+                        <span>•</span>
+                        <span>
+                          Webhooks: {acc.webhook_subscription_status === 'SUBSCRIBED' ? (
+                            <span className="text-[#15803D] font-semibold">Subscribed</span>
+                          ) : acc.webhook_subscription_status === 'FAILED' ? (
+                            <span className="text-[#DC2626] font-semibold">Subscription Required</span>
+                          ) : (
+                            <span className="text-[#70706B]">Standard</span>
+                          )}
+                        </span>
                       </div>
                     </div>
                   </div>
@@ -283,12 +313,22 @@ export default function InstagramAccountsPage() {
                   <div className="flex items-center gap-2.5 flex-wrap w-full sm:w-auto">
                     <button
                       type="button"
+                      disabled={verifyingWebhookId === acc.id}
+                      onClick={() => handleVerifyWebhooks(acc.id)}
+                      className="inline-flex items-center gap-1.5 text-xs text-[#064125] bg-[#EAF6EE] hover:bg-[#D4EDDA] font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
+                      title="Inspect and ensure real-time webhook subscriptions (comments, messages) on Meta"
+                    >
+                      <Zap size={12} className={verifyingWebhookId === acc.id ? 'animate-pulse text-[#15803D]' : ''} />
+                      <span>{verifyingWebhookId === acc.id ? 'Verifying...' : 'Verify Webhooks'}</span>
+                    </button>
+                    <button
+                      type="button"
                       disabled={syncingId === acc.id}
                       onClick={() => handleSync(acc.id)}
                       className="inline-flex items-center gap-1.5 text-xs text-[#064125] bg-[#EAF6EE] hover:bg-[#D4EDDA] font-semibold px-3 py-1.5 rounded-lg transition-colors cursor-pointer disabled:opacity-50"
                     >
                       <RefreshCw size={12} className={syncingId === acc.id ? 'animate-spin' : ''} />
-                      <span>{syncingId === acc.id ? 'Syncing...' : 'Sync Real-Time Data'}</span>
+                      <span>{syncingId === acc.id ? 'Syncing...' : 'Sync Profile'}</span>
                     </button>
                     {!isActive && (
                       <button

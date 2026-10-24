@@ -40,8 +40,23 @@ class InstagramAccountOut(BaseModel):
     last_validated_at: Optional[datetime] = None
     last_refreshed_at: Optional[datetime] = None
     last_error_code: Optional[str] = None
+    webhook_subscription_status: Optional[str] = "UNKNOWN"
+    webhook_subscribed_at: Optional[datetime] = None
     connected_at: datetime
     status: Optional[str] = "CONNECTED"
+
+class WebhookSubscriptionStatusOut(BaseModel):
+    account_id: uuid.UUID
+    ig_user_id: str
+    username: str
+    is_subscribed: bool
+    subscribed_fields: List[str] = []
+    status: str  # "SUBSCRIBED" | "NOT_SUBSCRIBED" | "TOKEN_EXPIRED" | "PERMISSION_DENIED" | "RATE_LIMITED" | "META_ERROR" | "UNKNOWN"
+    requires_reconnect: bool = False
+    can_retry: bool = True
+    error_code: Optional[str] = None
+    error_message: Optional[str] = None
+    last_checked_at: datetime
 
 class InstagramAccountSummary(BaseModel):
     id: uuid.UUID
@@ -74,7 +89,7 @@ class ConnectAccountRequest(BaseModel):
 class FlowDefinitionSchema(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    trigger: Dict[str, Any]
+    trigger: Optional[Dict[str, Any]] = None
     conditions: Optional[List[Dict[str, Any]]] = []
     actions: Optional[List[Dict[str, Any]]] = []
     nodes: Optional[List[Dict[str, Any]]] = []
@@ -90,6 +105,8 @@ class AutomationUpdate(BaseModel):
     name: Optional[str] = Field(None, min_length=1, max_length=255)
     description: Optional[str] = Field(None, max_length=2000)
     status: Optional[str] = Field(None, pattern=r"^(DRAFT|ACTIVE|PAUSED|ARCHIVED)$")
+    instagram_account_id: Optional[uuid.UUID] = None
+    trigger_type: Optional[str] = Field(None, pattern=r"^(COMMENT|DM|STORY_REPLY|MENTION)$")
     flow_definition: Optional[FlowDefinitionSchema] = None
 
 class AutomationOut(BaseModel):
@@ -195,3 +212,27 @@ class WebhookChallengeQuery(BaseModel):
     hub_mode: Optional[str] = Field(None, alias="hub.mode")
     hub_challenge: Optional[str] = Field(None, alias="hub.challenge")
     hub_verify_token: Optional[str] = Field(None, alias="hub.verify_token")
+
+class AutomationRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    instagram_account_id: Optional[uuid.UUID] = None
+    event_id: str
+    automation_id: Optional[uuid.UUID] = None
+    automation_version_id: Optional[uuid.UUID] = None
+    action: str
+    status: str
+    attempt: int
+    meta_error_code: Optional[str] = None
+    meta_error_subcode: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+class AutomationRunsPage(BaseModel):
+    items: List[AutomationRunOut]
+    total: int
+    limit: int
+    offset: int
+

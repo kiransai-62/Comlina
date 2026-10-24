@@ -10,6 +10,7 @@ htmlcov
 .env
 .env.*
 *.db
+*.db-journal
 *.sqlite
 *.sqlite3
 .git

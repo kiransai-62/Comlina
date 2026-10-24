@@ -9,7 +9,7 @@ psycopg2-binary==2.9.13
 arq==0.28.0
 redis==5.3.1
 httpx==0.28.1
-pyjwt[crypto]==2.14.0
+pyjwt[crypto]==2.15.0
 cryptography==50.0.1
 python-multipart==0.0.32
 pytest==9.1.1

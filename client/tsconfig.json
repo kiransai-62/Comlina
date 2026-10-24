@@ -24,6 +24,9 @@
     ],
     "baseUrl": ".",
     "paths": {
+      "@/stores/*": [
+        "./src/stores/*"
+      ],
       "@/*": [
         "./src/*",
         "./*"

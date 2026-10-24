@@ -51,7 +51,7 @@ async def get_current_user(
     if not user_id_str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid token: missing subject claim",
+            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -60,7 +60,7 @@ async def get_current_user(
     except ValueError:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid user ID format in token",
+            detail="Could not validate credentials",
             headers={"WWW-Authenticate": "Bearer"},
         )
 
@@ -156,7 +156,18 @@ async def get_current_workspace(
             target_ws_id = uuid.UUID(x_workspace_id)
             stmt = stmt.where(Workspace.id == target_ws_id)
         except ValueError:
-            pass
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid X-Workspace-ID header format"
+            )
+        res = await db.execute(stmt)
+        workspace = res.scalars().first()
+        if not workspace:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Forbidden: Not a member of the requested workspace"
+            )
+        return workspace
 
     res = await db.execute(stmt)
     workspace = res.scalars().first()

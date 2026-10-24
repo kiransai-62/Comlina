@@ -1,38 +1,11 @@
 # worker/app/integrations/instagram/follower_status.py
-from enum import Enum
-from typing import Tuple
-from app.integrations.instagram.client import MetaGraphClient
-from app.integrations.instagram.exceptions import MetaRateLimitError, MetaGraphAPIError
+# Re-exported from server.app.integrations.instagram.follower_status (single source of truth)
+import sys
+from pathlib import Path
 
-class FollowerStatus(str, Enum):
-    UNKNOWN = "UNKNOWN"
-    FOLLOWING = "FOLLOWING"
-    NOT_FOLLOWING = "NOT_FOLLOWING"
-    CHECK_UNAVAILABLE = "CHECK_UNAVAILABLE"
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SERVER_DIR = REPO_ROOT / "server"
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
 
-class InstagramFollowerService:
-    def __init__(self, client: MetaGraphClient):
-        self.client = client
-
-    async def check_follower_status(self, business_ig_id: str, commenter_ig_id: str) -> Tuple[FollowerStatus, str]:
-        """
-        Checks whether the commenter follows the business account.
-        Returns (FollowerStatus, reason).
-        Never throws unhandled exceptions; returns CHECK_UNAVAILABLE on rate limits or API blocks.
-        """
-        if not commenter_ig_id or not business_ig_id:
-            return FollowerStatus.UNKNOWN, "Missing account IDs"
-
-        try:
-            data = await self.client.get(f"{commenter_ig_id}", params={"fields": "is_user_follow_business"})
-            is_following = data.get("is_user_follow_business", False)
-            if is_following:
-                return FollowerStatus.FOLLOWING, "Confirmed follower via Meta Graph API"
-            else:
-                return FollowerStatus.NOT_FOLLOWING, "Confirmed non-follower via Meta Graph API"
-        except MetaRateLimitError:
-            return FollowerStatus.CHECK_UNAVAILABLE, "Meta Rate Limit Exceeded"
-        except MetaGraphAPIError as e:
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Graph API Error (messaging consent required): {str(e)}"
-        except Exception as e:
-            return FollowerStatus.CHECK_UNAVAILABLE, f"Unexpected error checking follower status: {str(e)}"
+from server.app.integrations.instagram.follower_status import *

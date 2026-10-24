@@ -4,7 +4,7 @@
 # ==========================================
 
 # 1. Dependencies Stage
-FROM node:18-alpine AS deps
+FROM node:18.20.4-alpine3.20 AS deps
 RUN apk add --no-cache libc6-compat
 WORKDIR /app
 
@@ -12,7 +12,7 @@ COPY package.json package-lock.json* ./
 RUN npm ci
 
 # 2. Builder Stage
-FROM node:18-alpine AS builder
+FROM node:18.20.4-alpine3.20 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -25,7 +25,7 @@ ENV NODE_ENV=production
 RUN npm run build
 
 # 3. Runner Stage
-FROM node:18-alpine AS runner
+FROM node:18.20.4-alpine3.20 AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production

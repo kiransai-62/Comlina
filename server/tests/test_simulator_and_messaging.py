@@ -34,26 +34,48 @@ async def test_send_private_reply_with_buttons():
     assert call_args[0][0] == "me/messages"
     payload = call_args[1]["json_data"]
     assert payload["recipient"] == {"comment_id": "comm_123"}
-    assert payload["message"]["attachment"]["type"] == "template"
-    assert payload["message"]["attachment"]["payload"]["buttons"][0]["url"] == "https://comlina.com/guide.pdf"
+    # Meta Graph API restricts comment_id private replies to plain text messages
+    assert "attachment" not in payload["message"]
+    assert payload["message"]["text"] == "Here is your requested guide!\n\nDownload Guide: https://comlina.com/guide.pdf"
 
 @pytest.mark.asyncio
-async def test_send_private_reply_fallback_to_sender_id():
+async def test_send_private_reply_does_not_mask_comment_id_error():
+    from app.integrations.instagram.exceptions import MetaGraphAPIError
     client_mock = AsyncMock()
-    # First call with comment_id raises exception, fallback with sender_id succeeds
-    client_mock.post.side_effect = [Exception("Comment too old"), {"message_id": "mid_fallback"}]
+    client_mock.post.side_effect = MetaGraphAPIError("Comment is too old to reply", code=100, error_subcode=2018001)
     messaging = InstagramMessaging(client_mock)
 
+    with pytest.raises(MetaGraphAPIError) as exc_info:
+        await messaging.send_private_reply(
+            comment_id="expired_comm",
+            message_text="Hello directly in DM",
+            fallback_sender_id="ig_user_789"
+        )
+    assert exc_info.value.code == 100
+    assert exc_info.value.error_subcode == 2018001
+    # Verify exactly one call was made; no invalid fallback to recipient id outside 24h window
+    assert client_mock.post.await_count == 1
+
+@pytest.mark.asyncio
+async def test_send_private_reply_direct_dm_when_no_comment_id():
+    client_mock = AsyncMock()
+    client_mock.post.return_value = {"message_id": "mid_direct"}
+    messaging = InstagramMessaging(client_mock)
+
+    buttons = [{"label": "Shop Now", "url": "https://comlina.com/shop"}]
     res = await messaging.send_private_reply(
-        comment_id="expired_comm",
+        comment_id=None,
         message_text="Hello directly in DM",
-        fallback_sender_id="ig_user_789"
+        fallback_sender_id="ig_user_789",
+        buttons=buttons
     )
-    assert res == {"message_id": "mid_fallback"}
-    assert client_mock.post.await_count == 2
-    # Verify second call used recipient id
-    second_call = client_mock.post.call_args_list[1]
-    assert second_call[1]["json_data"]["recipient"] == {"id": "ig_user_789"}
+    assert res == {"message_id": "mid_direct"}
+    client_mock.post.assert_awaited_once()
+    call_args = client_mock.post.call_args
+    assert call_args[0][0] == "me/messages"
+    payload = call_args[1]["json_data"]
+    assert payload["recipient"] == {"id": "ig_user_789"}
+    assert payload["message"]["attachment"]["type"] == "template"
 
 @pytest.mark.asyncio
 async def test_messaging_webhook_send_dm_job_pipeline():
@@ -151,22 +173,78 @@ async def test_messaging_webhook_send_dm_job_pipeline():
         assert contact_msg is not None
         assert contact_msg.text == "Hello, I accepted your request!"
 
-def test_simulate_comment_endpoint():
+@pytest.mark.asyncio
+async def test_simulate_comment_endpoint(monkeypatch):
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", True)
+    monkeypatch.setattr("app.core.config.settings.ENVIRONMENT", "development")
+    await init_db()
+
+    ws_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+    async with get_db_session() as session:
+        ws = Workspace(id=ws_id, name="Sim Workspace", slug=f"sim-ws-{ws_id.hex[:6]}")
+        acc = InstagramAccount(
+            id=acc_id,
+            workspace_id=ws_id,
+            ig_user_id="sim_biz_123",
+            username="sim_creator",
+            access_token_encrypted=encrypt_token("sim_token_val"),
+            is_active=True
+        )
+        session.add(ws)
+        session.add(acc)
+        await session.commit()
+
     client = TestClient(app)
-    # Post to simulate-comment
+    auth_headers = {"Authorization": "Bearer mock_dev_token"}
+
+    # Positive: Authenticated, valid account_id, dev routes enabled
     payload = {
+        "account_id": str(acc_id),
         "text": "Can you send me the AI link?",
         "sender_username": "alex_creator",
         "sender_id": "alex_12345"
     }
-    response = client.post("/webhooks/instagram/simulate-comment", json=payload)
+    response = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "SIMULATION_SUCCESS"
     assert "execution_result" in data
     assert "event_id" in data
+    assert data["account_id"] == str(acc_id)
 
     # Also test mounted /api/webhooks/instagram/simulate-comment
-    response_api = client.post("/api/webhooks/instagram/simulate-comment", json=payload)
+    response_api = client.post("/api/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
     assert response_api.status_code == 200
     assert response_api.json()["status"] == "SIMULATION_SUCCESS"
+
+    # Negative: Missing Authorization header -> 401
+    res_no_auth = client.post("/webhooks/instagram/simulate-comment", json=payload)
+    assert res_no_auth.status_code == 401
+
+    # Negative: Missing account_id fails validation -> 422 (no fallback to first active account)
+    res_no_account = client.post(
+        "/webhooks/instagram/simulate-comment",
+        json={"text": "Hello without account"},
+        headers=auth_headers
+    )
+    assert res_no_account.status_code == 422
+
+    # Negative: Non-existent account_id -> 404
+    res_bad_account = client.post(
+        "/webhooks/instagram/simulate-comment",
+        json={"account_id": str(uuid.uuid4()), "text": "Hello non-existent"},
+        headers=auth_headers
+    )
+    assert res_bad_account.status_code == 404
+
+    # Negative: Disabled when ENABLE_DEV_ROUTES is False -> 404
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", False)
+    res_dev_off = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
+    assert res_dev_off.status_code == 404
+
+    # Negative: In production, route is blocked (404 or fail-closed 503/403)
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", True)
+    monkeypatch.setattr("app.core.config.settings.ENVIRONMENT", "production")
+    res_prod = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
+    assert res_prod.status_code in (404, 403, 503)

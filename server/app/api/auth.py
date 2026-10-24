@@ -203,7 +203,10 @@ async def signup(
         email=email,
         full_name=full_name,
     )
-    user.timezone = f"pbkdf2:{pw_salt}:{pw_hash}"
+    # F13 fix: store the password hash in the dedicated `password_hash` column.
+    # Legacy code stored it in `timezone` (format: "pbkdf2:<salt>:<hash>"); new accounts
+    # use the canonical column so that profile PATCH operations cannot destroy auth material.
+    user.password_hash = f"pbkdf2:{pw_salt}:{pw_hash}"
 
     db.add(user)
     await db.flush()
@@ -264,15 +267,23 @@ async def login(
             detail="Invalid email or password",
         )
 
-    # Verify password from the timezone field convention
-    tz_val = user.timezone or ""
-    if not tz_val.startswith("pbkdf2:"):
+    # Verify password.
+    # New accounts store the hash in `user.password_hash`.
+    # Legacy accounts (created before F13 fix) have it in `user.timezone` ("pbkdf2:<salt>:<hash>").
+    # Accept either location; on first successful legacy login, migrate the hash in-place.
+    raw_hash_str = None
+    if hasattr(user, "password_hash") and user.password_hash and user.password_hash.startswith("pbkdf2:"):
+        raw_hash_str = user.password_hash
+    elif (user.timezone or "").startswith("pbkdf2:"):
+        raw_hash_str = user.timezone  # legacy storage
+
+    if not raw_hash_str:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
 
-    parts = tz_val.split(":", 2)
+    parts = raw_hash_str.split(":", 2)
     if len(parts) != 3:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -285,6 +296,15 @@ async def login(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Invalid email or password",
         )
+
+    # Opportunistic migration: if the hash lived in `timezone`, move it to `password_hash`
+    # so subsequent profile updates can no longer destroy it.
+    if hasattr(user, "password_hash") and not (user.password_hash or "").startswith("pbkdf2:"):
+        user.password_hash = raw_hash_str
+        # Clear the timezone field only if it still holds the hash (leave user-set timezones)
+        if (user.timezone or "").startswith("pbkdf2:"):
+            user.timezone = "UTC"
+        await db.flush()
 
     # Provision workspace if needed
     workspace = await _ensure_default_workspace(user, db)
@@ -458,6 +478,8 @@ async def get_current_profile(
             "access_token": access_token,
             "refresh_token": refresh_token,
         },
+        "access_token": access_token,
+        "refresh_token": refresh_token,
     }
 
 
@@ -480,7 +502,20 @@ async def update_current_profile(
     if body.full_name is not None:
         user.full_name = body.full_name.strip()
     if body.timezone is not None:
-        user.timezone = body.timezone.strip()
+        # F13 guard: the `timezone` column was previously (mis)used to store the PBKDF2
+        # password hash for legacy accounts. Never let a profile update overwrite it.
+        new_tz = body.timezone.strip()
+        if new_tz.startswith("pbkdf2:"):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Invalid timezone value.",
+            )
+        # Only write the new timezone if the current value is NOT holding a legacy hash.
+        # Accounts that have been migrated (password_hash set) can freely update timezone.
+        current_tz = user.timezone or ""
+        if not current_tz.startswith("pbkdf2:"):
+            user.timezone = new_tz
+        # else: leave the legacy hash in place; the next login will migrate it.
     if body.avatar_url is not None:
         user.avatar_url = body.avatar_url.strip()
 

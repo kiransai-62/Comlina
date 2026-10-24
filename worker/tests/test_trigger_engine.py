@@ -3,14 +3,30 @@ import pytest
 from app.engine.trigger_engine import TriggerEngine
 
 def test_v1_trigger_all_comments():
-    trigger = {"type": "COMMENT", "postsScope": "ALL"}
+    trigger = {"type": "COMMENT", "postsScope": "ALL", "replyToAll": True}
     event = {"event_type": "COMMENT", "text": "hello world"}
     assert TriggerEngine.evaluate_trigger(trigger, event) is True
 
 def test_v1_trigger_specific_post():
-    trigger = {"type": "COMMENT", "postsScope": "SPECIFIC", "postIds": ["post_123", "post_456"]}
+    trigger = {"type": "COMMENT", "postsScope": "SPECIFIC", "postIds": ["post_123", "post_456"], "replyToAll": True}
     assert TriggerEngine.evaluate_trigger(trigger, {"event_type": "COMMENT", "post_id": "post_123", "text": "hi"}) is True
     assert TriggerEngine.evaluate_trigger(trigger, {"event_type": "COMMENT", "post_id": "post_999", "text": "hi"}) is False
+
+def test_fail_closed_on_empty_trigger():
+    # Regression: Trigger with no keywords and no replyToAll must NOT fire
+    trigger_config = {"type": "COMMENT", "replyToAll": False, "keywords": []}
+    result = TriggerEngine.evaluate_trigger(
+        trigger_config,
+        {"event_type": "COMMENT", "text": "Test comment", "post_id": "123"}
+    )
+    assert result is False
+
+    # Regression: Missing keywords and missing replyToAll also fails closed
+    trigger_empty = {"type": "COMMENT"}
+    assert TriggerEngine.evaluate_trigger(
+        trigger_empty,
+        {"event_type": "COMMENT", "text": "Test comment"}
+    ) is False
 
 def test_v2_playbook_single_keyword():
     trigger = {

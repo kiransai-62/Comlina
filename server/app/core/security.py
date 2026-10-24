@@ -80,150 +80,131 @@ def get_jwks_client() -> Optional[jwt.PyJWKClient]:
     return _jwks_client
 
 
+GENERIC_UNAUTHORIZED_EXCEPTION = HTTPException(
+    status_code=status.HTTP_401_UNAUTHORIZED,
+    detail="Could not validate credentials",
+    headers={"WWW-Authenticate": "Bearer"},
+)
+
+ALLOWED_JWT_ALGORITHMS = ["HS256", "RS256", "ES256"]
+
+
 def decode_supabase_jwt(token: str) -> Dict[str, Any]:
     """
-    Decodes and verifies an access token JWT.
-    Supports:
-      1. Backend-issued JWTs (iss=comlina-backend, signed with BACKEND_JWT_SECRET)
-      2. Supabase JWTs (signed with SUPABASE_JWT_SECRET)
-      3. Supabase Cloud fallback verification
+    Decodes and verifies an access token JWT with hardened security checks:
+    - Algorithm explicitly allowed (never 'none')
+    - Signature cryptographically verified
+    - exp required and verified
+    - aud ('authenticated') required and verified
+    - iss required and verified (<SUPABASE_URL>/auth/v1 or comlina-backend)
+    - sub required, non-empty, and verified
+    - Generic 401 response on any failure
     """
-    if not token or token == "dev-bypass-token" or token == "dev_mock_token":
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+    if not token or not isinstance(token, str):
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # Basic structural validation for JWT (3 dot-separated base64 segments)
+    # Basic structural check (header.payload.signature)
     parts = token.split(".")
     if len(parts) != 3:
-        raise HTTPException(
-            status_code=status.HTTP_401_UNAUTHORIZED,
-            detail="Invalid or expired token",
-            headers={"WWW-Authenticate": "Bearer"},
-        )
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # Strategy 0: Backend-issued JWT (BACKEND_JWT_SECRET / iss=comlina-backend)
-    if settings.BACKEND_JWT_SECRET:
-        try:
-            payload = jwt.decode(
-                token,
-                settings.BACKEND_JWT_SECRET,
-                algorithms=["HS256"],
-                audience="authenticated",
-            )
-            if payload.get("iss") == "comlina-backend":
-                if payload.get("token_type") == "refresh":
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Refresh token cannot be used as an access token",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                logger.debug(f"[AUTH] Verified backend-issued JWT for user={payload.get('email')}")
-                return payload
-        except jwt.PyJWTError:
-            pass
+    # Inspect header without signature to verify algorithm
+    try:
+        header = jwt.get_unverified_header(token)
+    except Exception:
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-        # Also try without audience check for backend tokens
-        try:
-            payload = jwt.decode(
-                token,
-                settings.BACKEND_JWT_SECRET,
-                algorithms=["HS256"],
-                options={"verify_aud": False},
-            )
-            if payload.get("iss") == "comlina-backend":
-                if payload.get("token_type") == "refresh":
-                    raise HTTPException(
-                        status_code=status.HTTP_401_UNAUTHORIZED,
-                        detail="Refresh token cannot be used as an access token",
-                        headers={"WWW-Authenticate": "Bearer"},
-                    )
-                logger.debug(f"[AUTH] Verified backend-issued JWT (relaxed aud) for user={payload.get('email')}")
-                return payload
-        except jwt.PyJWTError:
-            pass
+    alg = header.get("alg")
+    if not alg or alg.lower() == "none" or alg not in ALLOWED_JWT_ALGORITHMS:
+        logger.warning("[AUTH] Rejecting JWT with disallowed algorithm: %s", alg)
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # Strategy 0.5: Asymmetric JWKS verification (ES256, RS256) via Supabase JWKS
-    jwks = get_jwks_client()
-    if jwks:
+    supabase_iss = f"{settings.SUPABASE_URL.rstrip('/')}/auth/v1"
+    allowed_issuers = {supabase_iss, "comlina-backend", "supabase"}
+
+    payload: Optional[Dict[str, Any]] = None
+
+    # Strategy 1: Asymmetric JWKS verification (RS256, ES256)
+    if alg in ("RS256", "ES256"):
+        jwks = get_jwks_client()
+        if not jwks:
+            logger.warning("[AUTH] Received asymmetric token %s but SUPABASE_JWKS_URL is not configured", alg)
+            raise GENERIC_UNAUTHORIZED_EXCEPTION
         try:
             signing_key = jwks.get_signing_key_from_jwt(token)
             payload = jwt.decode(
                 token,
                 signing_key.key,
-                algorithms=["ES256", "RS256", "HS256"],
-                options={"verify_aud": False},
+                algorithms=[alg],
+                audience="authenticated",
+                options={
+                    "require": ["exp", "sub", "aud", "iss"],
+                    "verify_exp": True,
+                    "verify_aud": True,
+                    "verify_iss": False,
+                },
             )
-            logger.debug(f"[AUTH] Verified token via Supabase JWKS: sub={payload.get('sub')}")
-            return payload
-        except Exception as jwks_err:
-            logger.debug(f"[AUTH] JWKS verification attempt failed: {jwks_err}")
+        except Exception as e:
+            logger.warning("[AUTH] JWKS JWT validation failed: %s", type(e).__name__)
+            raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # Strategy 1: Local verification across candidate secrets
-    candidate_secrets = []
-    if settings.SUPABASE_JWT_SECRET and settings.SUPABASE_JWT_SECRET not in candidate_secrets:
-        candidate_secrets.append(settings.SUPABASE_JWT_SECRET)
-    
-    # Project secret for Supabase instance vrfwgoigtmixkkunvrnw
-    project_secret = "gZcO366odD6VzDrwzP07A3z8ND91jJCspWbGt0B+jgLfVq6WKU4uVvTD1TKxAah25MKz0iJZB4xhOE6loX4PnQ=="
-    dev_secret = "dev-jwt-secret-comlina-2026"
-    if project_secret not in candidate_secrets:
-        candidate_secrets.append(project_secret)
-    if dev_secret not in candidate_secrets:
-        candidate_secrets.append(dev_secret)
+    # Strategy 2: Symmetric HMAC verification (HS256)
+    elif alg == "HS256":
+        candidate_keys = []
+        for secret in [settings.BACKEND_JWT_SECRET, settings.SUPABASE_JWT_SECRET]:
+            if secret and secret not in candidate_keys:
+                candidate_keys.append(secret)
+                try:
+                    decoded = base64.b64decode(secret)
+                    if len(decoded) >= 32 and decoded not in candidate_keys:
+                        candidate_keys.append(decoded)
+                except Exception:
+                    pass
 
-    for sec in candidate_secrets:
-        # 1. Raw secret with authenticated audience
-        try:
-            return jwt.decode(
-                token,
-                sec,
-                algorithms=["HS256"],
-                audience="authenticated"
-            )
-        except jwt.PyJWTError:
-            pass
+        last_err = None
+        for key in candidate_keys:
+            try:
+                payload = jwt.decode(
+                    token,
+                    key,
+                    algorithms=["HS256"],
+                    audience="authenticated",
+                    options={
+                        "require": ["exp", "sub", "aud", "iss"],
+                        "verify_exp": True,
+                        "verify_aud": True,
+                        "verify_iss": False,
+                    },
+                )
+                break
+            except Exception as e:
+                last_err = e
 
-        # 2. Raw secret with relaxed audience
-        try:
-            return jwt.decode(
-                token,
-                sec,
-                algorithms=["HS256"],
-                options={"verify_aud": False}
-            )
-        except jwt.PyJWTError:
-            pass
+        if payload is None:
+            # Fallback to Supabase Auth Cloud validation
+            cloud_verified = _verify_with_supabase_cloud(token)
+            if cloud_verified:
+                payload = cloud_verified
+            else:
+                logger.warning("[AUTH] HMAC JWT validation failed: %s", type(last_err).__name__ if last_err else "no_key")
+                raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-        # 3. Base64-decoded secret
-        try:
-            decoded_sec = base64.b64decode(sec)
-            return jwt.decode(
-                token,
-                decoded_sec,
-                algorithms=["HS256"],
-                options={"verify_aud": False}
-            )
-        except Exception:
-            pass
+    if not payload:
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # Strategy 4: Fallback to authoritative Supabase Auth Cloud validation
-    cloud_verified_payload = _verify_with_supabase_cloud(token)
-    if cloud_verified_payload:
-        return cloud_verified_payload
+    # Required claims validation
+    sub = payload.get("sub")
+    if not sub or not str(sub).strip():
+        logger.warning("[AUTH] Rejecting JWT: missing or empty sub")
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    # If all verification strategies failed, inspect unverified claims for debugging
-    try:
-        unverified_header = jwt.get_unverified_header(token)
-        unverified_claims = jwt.decode(token, options={"verify_signature": False})
-        logger.error(f"[AUTH FAILED] Header: {unverified_header} Claims: {unverified_claims}")
-    except Exception as parse_err:
-        logger.error(f"[AUTH FAILED] Unparseable token ({token[:20]}...): {parse_err}")
+    iss = payload.get("iss")
+    if not iss or iss not in allowed_issuers:
+        logger.warning("[AUTH] Rejecting JWT: invalid iss '%s'", iss)
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
 
-    raise HTTPException(
-        status_code=status.HTTP_401_UNAUTHORIZED,
-        detail="Invalid or expired token",
-        headers={"WWW-Authenticate": "Bearer"},
-    )
+    if payload.get("token_type") == "refresh":
+        logger.warning("[AUTH] Rejecting refresh token used as access token")
+        raise GENERIC_UNAUTHORIZED_EXCEPTION
+
+    return payload

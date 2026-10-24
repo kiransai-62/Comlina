@@ -1,41 +1,12 @@
 # worker/app/core/encryption.py
-import base64
-from cryptography.fernet import Fernet, InvalidToken
-from app.core.config import worker_settings
+# Re-exported from server.app.core.encryption (single source of truth)
+import sys
+from pathlib import Path
 
-def _get_fernet() -> Fernet:
-    key = worker_settings.TOKEN_ENCRYPTION_KEY
-    if not key:
-        raise ValueError("TOKEN_ENCRYPTION_KEY is not configured")
-    key_bytes = key.encode("utf-8") if isinstance(key, str) else key
-    try:
-        decoded = base64.urlsafe_b64decode(key_bytes)
-        if len(decoded) != 32:
-            key_bytes = base64.urlsafe_b64encode(decoded.ljust(32, b"0")[:32])
-    except Exception:
-        import hashlib
-        key_bytes = base64.urlsafe_b64encode(hashlib.sha256(key_bytes).digest())
-    
-    return Fernet(key_bytes)
+REPO_ROOT = Path(__file__).resolve().parents[3]
+SERVER_DIR = REPO_ROOT / "server"
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
 
-def decrypt_token(ciphertext: str, allow_fallback: bool = False) -> str:
-    """
-    Decrypts a Fernet ciphertext back to plaintext.
-    If ciphertext cannot be decrypted and allow_fallback is True, returns original string.
-    Otherwise raises InvalidToken.
-    """
-    if not ciphertext:
-        return ""
-    f = _get_fernet()
-    try:
-        decrypted_bytes = f.decrypt(ciphertext.encode("utf-8"))
-        return decrypted_bytes.decode("utf-8")
-    except (InvalidToken, Exception):
-        if allow_fallback:
-            return ciphertext
-        raise
-
-def encrypt_token(plaintext: str) -> str:
-    if not plaintext:
-        return ""
-    return _get_fernet().encrypt(plaintext.encode("utf-8")).decode("utf-8")
+from server.app.core.encryption import *
+from server.app.core.encryption import _normalize_key, _get_fernet, _get_multi_fernet

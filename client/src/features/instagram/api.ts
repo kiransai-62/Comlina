@@ -1,6 +1,6 @@
 // client/features/instagram/api.ts
 import { api } from '@/lib/api';
-import { ConnectedInstagramAccount, InstagramConnectionStatusResponse } from './types';
+import { ConnectedInstagramAccount, InstagramConnectionStatusResponse, WebhookSubscriptionStatus } from './types';
 
 export interface InstagramMediaApiItem {
   id: string;
@@ -73,6 +73,8 @@ export const instagramApi = {
       { timeout: 60000 }
     ),
   syncAccount: (id: string) => api.post<ConnectedInstagramAccount>(`/instagram/accounts/${id}/sync`, undefined, { timeout: 45000 }),
+  getWebhookSubscription: (id: string) => api.get<WebhookSubscriptionStatus>(`/instagram/accounts/${id}/webhook-subscription`, { timeout: 30000 }),
+  retryWebhookSubscription: (id: string) => api.post<WebhookSubscriptionStatus>(`/instagram/accounts/${id}/webhook-subscription`, undefined, { timeout: 30000 }),
   connectDevAccount: () => api.post<ConnectedInstagramAccount>('/instagram/connect-dev-account', undefined, { timeout: 30000 }),
   disconnect: (id: string) => api.delete<void>(`/instagram/accounts/${id}`, { timeout: 30000 })
 };
