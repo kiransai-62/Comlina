@@ -173,23 +173,78 @@ async def test_messaging_webhook_send_dm_job_pipeline():
         assert contact_msg is not None
         assert contact_msg.text == "Hello, I accepted your request!"
 
-def test_simulate_comment_endpoint(monkeypatch):
+@pytest.mark.asyncio
+async def test_simulate_comment_endpoint(monkeypatch):
     monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", True)
+    monkeypatch.setattr("app.core.config.settings.ENVIRONMENT", "development")
+    await init_db()
+
+    ws_id = uuid.uuid4()
+    acc_id = uuid.uuid4()
+    async with get_db_session() as session:
+        ws = Workspace(id=ws_id, name="Sim Workspace", slug=f"sim-ws-{ws_id.hex[:6]}")
+        acc = InstagramAccount(
+            id=acc_id,
+            workspace_id=ws_id,
+            ig_user_id="sim_biz_123",
+            username="sim_creator",
+            access_token_encrypted=encrypt_token("sim_token_val"),
+            is_active=True
+        )
+        session.add(ws)
+        session.add(acc)
+        await session.commit()
+
     client = TestClient(app)
-    # Post to simulate-comment
+    auth_headers = {"Authorization": "Bearer mock_dev_token"}
+
+    # Positive: Authenticated, valid account_id, dev routes enabled
     payload = {
+        "account_id": str(acc_id),
         "text": "Can you send me the AI link?",
         "sender_username": "alex_creator",
         "sender_id": "alex_12345"
     }
-    response = client.post("/webhooks/instagram/simulate-comment", json=payload)
+    response = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
     assert response.status_code == 200
     data = response.json()
     assert data["status"] == "SIMULATION_SUCCESS"
     assert "execution_result" in data
     assert "event_id" in data
+    assert data["account_id"] == str(acc_id)
 
     # Also test mounted /api/webhooks/instagram/simulate-comment
-    response_api = client.post("/api/webhooks/instagram/simulate-comment", json=payload)
+    response_api = client.post("/api/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
     assert response_api.status_code == 200
     assert response_api.json()["status"] == "SIMULATION_SUCCESS"
+
+    # Negative: Missing Authorization header -> 401
+    res_no_auth = client.post("/webhooks/instagram/simulate-comment", json=payload)
+    assert res_no_auth.status_code == 401
+
+    # Negative: Missing account_id fails validation -> 422 (no fallback to first active account)
+    res_no_account = client.post(
+        "/webhooks/instagram/simulate-comment",
+        json={"text": "Hello without account"},
+        headers=auth_headers
+    )
+    assert res_no_account.status_code == 422
+
+    # Negative: Non-existent account_id -> 404
+    res_bad_account = client.post(
+        "/webhooks/instagram/simulate-comment",
+        json={"account_id": str(uuid.uuid4()), "text": "Hello non-existent"},
+        headers=auth_headers
+    )
+    assert res_bad_account.status_code == 404
+
+    # Negative: Disabled when ENABLE_DEV_ROUTES is False -> 404
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", False)
+    res_dev_off = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
+    assert res_dev_off.status_code == 404
+
+    # Negative: In production, route is blocked (404 or fail-closed 503/403)
+    monkeypatch.setattr("app.core.config.settings.ENABLE_DEV_ROUTES", True)
+    monkeypatch.setattr("app.core.config.settings.ENVIRONMENT", "production")
+    res_prod = client.post("/webhooks/instagram/simulate-comment", json=payload, headers=auth_headers)
+    assert res_prod.status_code in (404, 403, 503)

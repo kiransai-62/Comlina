@@ -542,13 +542,14 @@ async def test_scenario_6_public_teaser_reply_fails_gracefully():
 
         summary = await process_comment_job({}, f"wh_{uuid.uuid4().hex[:8]}", event_data)
 
-    assert summary["status"] == "COMPLETED"
+    assert summary["status"] == "FAILED"
     assert summary["processing_state"] == "resource_sent"
     results = summary["results"][0]["result"]["results"]
     dm_res = next(r for r in results if r["action"] == "PRIVATE_DM")
     assert dm_res["status"] == "SUCCESS"
     teaser_res = next(r for r in results if r["action"] == "PUBLIC_REPLY")
     assert teaser_res["status"] == "FAILED"
+    assert "Comment was deleted" in str(teaser_res.get("error", ""))
 
 
 @pytest.mark.asyncio

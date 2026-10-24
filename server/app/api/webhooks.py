@@ -64,6 +64,25 @@ async def _insert_webhook_event_idempotent(
         return (await db.execute(stmt_fetch)).scalar_one_or_none()
 from arq import create_pool
 from arq.connections import RedisSettings
+
+_shared_redis_pool = None
+_shared_redis_lock = None
+
+async def get_arq_redis_pool():
+    global _shared_redis_pool, _shared_redis_lock
+    if _shared_redis_pool is not None:
+        return _shared_redis_pool
+    if _shared_redis_lock is None:
+        import asyncio
+        _shared_redis_lock = asyncio.Lock()
+    async with _shared_redis_lock:
+        if _shared_redis_pool is None:
+            try:
+                _shared_redis_pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
+            except Exception as e:
+                logger.warning(f"Could not connect to Redis pool in development mode: {e}")
+                _shared_redis_pool = None
+    return _shared_redis_pool
 from app.core.config import settings
 from app.core.database import get_db
 from app.core.security import verify_meta_webhook_signature
@@ -100,7 +119,7 @@ async def verify_webhook_subscription(
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Verification token mismatch")
 
 from pydantic import BaseModel
-from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Depends, Form, BackgroundTasks
+from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Depends, Form, Header, BackgroundTasks
 
 async def execute_webhook_event_inprocess(event_id: str, event_data: dict) -> dict:
     """
@@ -115,31 +134,57 @@ async def execute_webhook_event_inprocess(event_id: str, event_data: dict) -> di
     elif event_type in ("MESSAGING", "DM"):
         from app.jobs.send_dm import send_dm_job
         return await send_dm_job({}, event_id, event_data)
-    return {"status": "UNHANDLED_EVENT_TYPE", "type": event_type}
+
+    # F10: Mark unhandled event type as IGNORED so it doesn't remain PENDING indefinitely
+    try:
+        from app.jobs.process_comment import _update_webhook_event
+        from app.core.database import get_db_session
+        async with get_db_session() as session:
+            await _update_webhook_event(
+                session, event_id, event_data.get("provider_event_id"), "IGNORED", f"Unhandled event type: {event_type}"
+            )
+    except Exception as ex:
+        logger.warning(f"Failed to update WebhookEvent status for unhandled event {event_id}: {ex}")
+
+    return {"status": "IGNORED", "type": event_type}
 
 class SimulateCommentRequest(BaseModel):
-    text: str
+    account_id: str
+    text: Optional[str] = None
+    comment_text: Optional[str] = None
     sender_username: str = "test_user"
     sender_id: str = "test_sender_123"
     post_id: Optional[str] = None
+    media_id: Optional[str] = None
     comment_id: Optional[str] = None
     business_ig_id: Optional[str] = None
-    account_id: Optional[str] = None
 
-@router.post("/simulate-comment")
-async def simulate_comment(
-    req: SimulateCommentRequest,
-    db: AsyncSession = Depends(get_db)
+async def _get_dev_simulation_db(
+    authorization: Optional[str] = Header(None, alias="Authorization"),
 ):
-    """
-    Simulator endpoint to verify Comment -> Keyword Check -> DM -> Contact/Inbox/Analytics loop in one call.
-    Disabled in production and requires ENABLE_DEV_ROUTES in development.
-    """
     if settings.ENVIRONMENT == "production" or not settings.ENABLE_DEV_ROUTES:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Simulation endpoint is disabled in production and requires ENABLE_DEV_ROUTES."
         )
+    if not authorization or not authorization.strip().startswith("Bearer "):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Authentication required for simulation endpoint.",
+            headers={"WWW-Authenticate": "Bearer"}
+        )
+    async for s in get_db():
+        yield s
+
+@router.post("/simulate-comment")
+async def simulate_comment(
+    req: SimulateCommentRequest,
+    db: AsyncSession = Depends(_get_dev_simulation_db)
+):
+    """
+    Simulator endpoint to verify Comment -> Keyword Check -> DM -> Contact/Inbox/Analytics loop in one call.
+    Disabled in production and requires ENABLE_DEV_ROUTES in development.
+    """
 
     account = None
     if req.account_id:
@@ -159,19 +204,21 @@ async def simulate_comment(
         )
         account = (await db.execute(stmt_acc)).scalar_one_or_none()
 
-    if not account:
-        stmt_acc = select(InstagramAccount).where(InstagramAccount.is_active == True).limit(1)
-        account = (await db.execute(stmt_acc)).scalars().first()
-
+    # Hard-gate: no implicit fallback — the caller must supply account_id or business_ig_id.
+    # An unrestricted .limit(1) query would silently pick an arbitrary production account.
     if not account:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="No connected Instagram account found in database to simulate comment against."
+            detail=(
+                "No connected Instagram account found for the supplied account_id / business_ig_id. "
+                "Pass a valid account_id or business_ig_id in the request body to simulate against a specific account."
+            )
         )
 
     provider_id = f"sim_{uuid.uuid4().hex[:12]}"
     comment_id = req.comment_id or f"sim_comm_{uuid.uuid4().hex[:8]}"
-    post_id = req.post_id or "sim_post_001"
+    post_id = req.media_id or req.post_id or "sim_post_001"
+    comment_text = req.comment_text or req.text or "Test comment"
 
     evt = {
         "provider_event_id": provider_id,
@@ -179,7 +226,7 @@ async def simulate_comment(
         "business_ig_id": account.ig_user_id,
         "sender_id": req.sender_id,
         "sender_username": req.sender_username,
-        "text": req.text,
+        "text": comment_text,
         "post_id": post_id,
         "comment_id": comment_id,
         "workspace_id": str(account.workspace_id),
@@ -252,12 +299,8 @@ async def receive_meta_webhook(
     if not events:
         return Response(content="NO_EVENTS_FOUND", status_code=status.HTTP_200_OK)
 
-    # Prepare ARQ Redis Pool
-    try:
-        redis_pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
-    except Exception as e:
-        logger.warning(f"Could not connect to Redis pool in development mode: {e}")
-        redis_pool = None
+    # Prepare ARQ Redis Pool (shared pool across requests to prevent connection leaks)
+    redis_pool = await get_arq_redis_pool()
 
     for evt in events:
         provider_id = evt["provider_event_id"]
