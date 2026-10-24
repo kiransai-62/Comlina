@@ -3,7 +3,7 @@
 # Multi-worker ASGI deployment (Gunicorn + Uvicorn)
 # ==========================================
 
-FROM python:3.11.9-slim-bookworm
+FROM python:3.15.0-slim-bookworm
 
 WORKDIR /app
 
