@@ -309,6 +309,14 @@ class Settings(BaseSettings):
             if not origin.startswith("https://"):
                 raise ValueError(f"Production error: Insecure HTTP origin '{origin}' forbidden in production; HTTPS required")
 
+        # 10. RAZORPAY secrets
+        if not self.RAZORPAY_KEY_ID or is_placeholder(self.RAZORPAY_KEY_ID):
+            raise ValueError("Production error: RAZORPAY_KEY_ID must be configured for payment processing")
+        if not self.RAZORPAY_KEY_SECRET or is_placeholder(self.RAZORPAY_KEY_SECRET) or len(self.RAZORPAY_KEY_SECRET) < 12:
+            raise ValueError("Production error: RAZORPAY_KEY_SECRET must be a valid secret (>= 12 chars)")
+        if not self.RAZORPAY_WEBHOOK_SECRET or is_placeholder(self.RAZORPAY_WEBHOOK_SECRET) or len(self.RAZORPAY_WEBHOOK_SECRET) < 16:
+            raise ValueError("Production error: RAZORPAY_WEBHOOK_SECRET must be set to a strong secret (>= 16 chars) to prevent unauthenticated plan upgrades")
+
         # 10. Razorpay Payments Configuration
         if not self.RAZORPAY_KEY_ID or is_placeholder(self.RAZORPAY_KEY_ID) or self.RAZORPAY_KEY_ID == "rzp_test_comlina2026":
             raise ValueError("Production error: RAZORPAY_KEY_ID must be set to a valid production key in production")

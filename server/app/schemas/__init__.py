@@ -212,3 +212,27 @@ class WebhookChallengeQuery(BaseModel):
     hub_mode: Optional[str] = Field(None, alias="hub.mode")
     hub_challenge: Optional[str] = Field(None, alias="hub.challenge")
     hub_verify_token: Optional[str] = Field(None, alias="hub.verify_token")
+
+class AutomationRunOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+
+    id: uuid.UUID
+    workspace_id: uuid.UUID
+    instagram_account_id: Optional[uuid.UUID] = None
+    event_id: str
+    automation_id: Optional[uuid.UUID] = None
+    automation_version_id: Optional[uuid.UUID] = None
+    action: str
+    status: str
+    attempt: int
+    meta_error_code: Optional[str] = None
+    meta_error_subcode: Optional[str] = None
+    error_message: Optional[str] = None
+    created_at: datetime
+
+class AutomationRunsPage(BaseModel):
+    items: List[AutomationRunOut]
+    total: int
+    limit: int
+    offset: int
+

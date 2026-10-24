@@ -14,6 +14,7 @@ from app.integrations.instagram.messaging import InstagramMessaging
 from app.models import (
     InstagramAccount,
     Automation,
+    AutomationVersion,
     Contact,
     Conversation,
     Message,
@@ -390,8 +391,24 @@ async def send_dm_job(
             automations = list(res_auto.scalars().all())
 
             for auto in automations:
+                # F6: Execute published snapshot if available
+                flow_def = auto.flow_definition
+                stmt_ver = (
+                    select(AutomationVersion.flow_definition)
+                    .where(
+                        AutomationVersion.automation_id == auto.id,
+                        AutomationVersion.workspace_id == account.workspace_id
+                    )
+                    .order_by(AutomationVersion.version.desc())
+                    .limit(1)
+                )
+                res_ver = await session.execute(stmt_ver)
+                latest_snapshot = res_ver.scalar_one_or_none()
+                if latest_snapshot and isinstance(latest_snapshot, dict):
+                    flow_def = latest_snapshot
+
                 res = await FlowEngine.run_flow(
-                    auto.flow_definition,
+                    flow_def,
                     event_data,
                     instagram_client=meta_client,
                     db_session=session
@@ -482,6 +499,15 @@ async def send_dm_job(
             return execution_summary
 
         except Exception as e:
+            # F4: Re-raise transient exceptions if ARQ retries remain
+            is_transient = getattr(e, "is_transient", False)
+            job_try = ctx.get("job_try", 1) if isinstance(ctx, dict) else 1
+            if is_transient and job_try < 3:
+                logger.warning(
+                    f"Transient exception in send_dm_job for event {event_id} (attempt {job_try}/3). "
+                    f"Re-raising for ARQ retry: {e}"
+                )
+                raise
             logger.error(f"Error in send_dm_job: {e}", exc_info=True)
             execution_summary["status"] = "FAILED"
             execution_summary["error"] = redact_string(str(e))

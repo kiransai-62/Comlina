@@ -43,16 +43,18 @@ class TriggerEngine:
         # v2 Studio: selectedPostId / postId
         selected_post_id = trigger_config.get("selectedPostId") or trigger_config.get("postId")
         if selected_post_id and str(selected_post_id).strip().lower() not in ("all", "", "none"):
-            current_post = str(event_data.get("post_id") or "")
-            if current_post and current_post != str(selected_post_id).strip():
+            current_post = str(event_data.get("post_id") or "").strip()
+            # F7: If locked to a specific post, event MUST carry that post_id
+            if not current_post or current_post != str(selected_post_id).strip():
                 return False
 
         # v1: postsScope + postIds
         posts_scope = str(trigger_config.get("postsScope", "ALL")).upper()
         if posts_scope == "SPECIFIC":
-            allowed_posts = [str(p) for p in trigger_config.get("postIds", [])]
-            current_post = str(event_data.get("post_id") or "")
-            if current_post and allowed_posts and current_post not in allowed_posts:
+            allowed_posts = [str(p).strip() for p in trigger_config.get("postIds", []) if str(p).strip()]
+            current_post = str(event_data.get("post_id") or "").strip()
+            # F7: If postsScope is SPECIFIC, event MUST carry a matching post_id in allowed_posts
+            if not current_post or (allowed_posts and current_post not in allowed_posts):
                 return False
 
         # 3. Explicit triggerMode check: "specific_keywords" vs "any_keyword"
@@ -74,18 +76,15 @@ class TriggerEngine:
                 return False
             # Fall through to keyword matching below
         else:
-            # 4. Backward compatibility for legacy automations without explicit triggerMode
+            # 4. Backward compatibility: Fail closed if no keywords and replyToAll is not True
             reply_to_all = trigger_config.get("replyToAll")
             if reply_to_all is True:
                 return True
 
             keywords = trigger_config.get("keywords")
             if not keywords:
-                # If replyToAll is explicitly False and keywords is empty, do not trigger
-                if "replyToAll" in trigger_config and not trigger_config.get("replyToAll"):
-                    return False
-                # In legacy v1 without keywords, trigger on all comments
-                return True
+                # F7: Fail closed. If no keywords and not explicitly replyToAll=True, do not trigger.
+                return False
 
         # 5. Keyword matching (for specific_keywords mode or legacy keyword configs)
         keywords = trigger_config.get("keywords") or []
@@ -106,7 +105,7 @@ class TriggerEngine:
             # Support single keywords (e.g. 'ai', 'link') and multi-word phrases (e.g. 'send me')
             try:
                 if match_whole_words:
-                    pattern = rf"\b{re.escape(kw_str)}\b"
+                    pattern = rf"(?:\b|^|\s){re.escape(kw_str)}(?:\b|$|\s)"
                     if re.search(pattern, text, re.IGNORECASE):
                         return True
                 else:

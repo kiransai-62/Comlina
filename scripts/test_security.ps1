@@ -13,7 +13,8 @@ try {
     Write-Host "  [PASS] X-Content-Type-Options: $($resp.Headers['X-Content-Type-Options'])" -ForegroundColor Green
     Write-Host "  [PASS] Content-Security-Policy present: $($resp.Headers['Content-Security-Policy'] -ne $null)" -ForegroundColor Green
     Write-Host "  [PASS] RateLimit Headers: Limit=$($resp.Headers['X-RateLimit-Limit']), Remaining=$($resp.Headers['X-RateLimit-Remaining'])" -ForegroundColor Green
-} catch {
+}
+catch {
     Write-Host "  [FAIL] Legitimate request failed: $_" -ForegroundColor Red
 }
 
@@ -22,11 +23,13 @@ Write-Host "`n[TEST 2] Trapping Scanner Exploit Probe (/.env)..." -ForegroundCol
 try {
     $resp = Invoke-WebRequest -Uri 'http://localhost:3000/.env' -Method Get -UseBasicParsing
     Write-Host "  [FAIL] Expected 403 but got $($resp.StatusCode)" -ForegroundColor Red
-} catch {
+}
+catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
     if ($statusCode -eq 403) {
         Write-Host "  [PASS] Blocked with HTTP 403 Forbidden!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] Unexpected status: $statusCode" -ForegroundColor Red
     }
 }
@@ -36,11 +39,13 @@ Write-Host "`n[TEST 3] Trapping PHP Scanner Probe (/wp-login.php)..." -Foregroun
 try {
     $resp = Invoke-WebRequest -Uri 'http://localhost:3000/wp-login.php' -Method Get -UseBasicParsing
     Write-Host "  [FAIL] Expected 403 but got $($resp.StatusCode)" -ForegroundColor Red
-} catch {
+}
+catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
     if ($statusCode -eq 403) {
         Write-Host "  [PASS] Blocked with HTTP 403 Forbidden!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] Unexpected status: $statusCode" -ForegroundColor Red
     }
 }
@@ -50,11 +55,13 @@ Write-Host "`n[TEST 4] Blocking Malicious Attack Tool User-Agent (sqlmap)..." -F
 try {
     $resp = Invoke-WebRequest -Uri 'http://localhost:3000/' -UserAgent 'sqlmap/1.5.2#stable' -Method Get -UseBasicParsing
     Write-Host "  [FAIL] Expected 403 but got $($resp.StatusCode)" -ForegroundColor Red
-} catch {
+}
+catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
     if ($statusCode -eq 403) {
         Write-Host "  [PASS] Blocked with HTTP 403 Forbidden!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] Unexpected status: $statusCode" -ForegroundColor Red
     }
 }
@@ -64,11 +71,13 @@ Write-Host "`n[TEST 5] Blocking Path Traversal in Query Parameters (../../etc/pa
 try {
     $resp = Invoke-WebRequest -Uri 'http://localhost:3000/dashboard?file=../../etc/passwd' -Method Get -UseBasicParsing
     Write-Host "  [FAIL] Expected 400 but got $($resp.StatusCode)" -ForegroundColor Red
-} catch {
+}
+catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
     if ($statusCode -eq 400) {
         Write-Host "  [PASS] Blocked with HTTP 400 Bad Request (Injection Signature Detected)!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] Unexpected status: $statusCode" -ForegroundColor Red
     }
 }
@@ -78,11 +87,13 @@ Write-Host "`n[TEST 6] Blocking SQL Injection in Query Parameters (UNION SELECT)
 try {
     $resp = Invoke-WebRequest -Uri 'http://localhost:3000/dashboard?search=1%20UNION%20SELECT%20*%20FROM%20users' -Method Get -UseBasicParsing
     Write-Host "  [FAIL] Expected 400 but got $($resp.StatusCode)" -ForegroundColor Red
-} catch {
+}
+catch {
     $statusCode = $_.Exception.Response.StatusCode.value__
     if ($statusCode -eq 400) {
         Write-Host "  [PASS] Blocked with HTTP 400 Bad Request (SQLi Detected)!" -ForegroundColor Green
-    } else {
+    }
+    else {
         Write-Host "  [FAIL] Unexpected status: $statusCode" -ForegroundColor Red
     }
 }
@@ -94,7 +105,8 @@ $rateLimitedCount = 0
 for ($i = 1; $i -le 15; $i++) {
     try {
         $resp = Invoke-WebRequest -Uri 'http://localhost:3000/login' -Method Head -UseBasicParsing
-    } catch {
+    }
+    catch {
         $sc = $_.Exception.Response.StatusCode.value__
         if ($sc -eq 429) {
             $rateLimitedCount++
@@ -104,7 +116,8 @@ for ($i = 1; $i -le 15; $i++) {
 }
 if ($blocked) {
     Write-Host "  [PASS] Rate limit engaged! Blocked $rateLimitedCount excess requests with HTTP 429 Too Many Requests!" -ForegroundColor Green
-} else {
+}
+else {
     Write-Host "  [FAIL] Expected HTTP 429 after 12 requests" -ForegroundColor Red
 }
 

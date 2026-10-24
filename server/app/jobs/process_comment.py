@@ -221,7 +221,11 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
             webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
-async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Dict[str, Any]) -> Dict[str, Any]:
+async def process_comment_job(
+    ctx: Dict[str, Any],
+    event_id: Any,
+    event_data: Optional[Dict[str, Any]] = None
+) -> Dict[str, Any]:
     """
     Job processing an incoming Instagram comment webhook event:
     1. Resolves InstagramAccount and active Automations.
@@ -231,6 +235,13 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
     5. Records Messages, AnalyticsEvent, and updates Automation stats.
     6. Updates WebhookEvent status to PROCESSED.
     """
+    if isinstance(event_id, dict) and event_data is None:
+        event_data = event_id
+        event_id = str(event_data.get("id") or event_data.get("event_id") or event_data.get("provider_event_id") or uuid.uuid4())
+    elif event_data is None:
+        event_data = {}
+    event_id = str(event_id)
+
     logger.info(f"Processing comment job: event_id={event_id}")
     execution_summary: Dict[str, Any] = {
         "event_id": event_id,

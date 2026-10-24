@@ -1,20 +1,11 @@
 # worker/app/integrations/instagram/__init__.py
-from app.integrations.instagram.client import MetaGraphClient
-from app.integrations.instagram.comments import InstagramComments
-from app.integrations.instagram.messaging import InstagramMessaging
-from app.integrations.instagram.follower_status import InstagramFollowerService, FollowerStatus
-from app.integrations.instagram.exceptions import (
-    MetaGraphAPIError, MetaRateLimitError, MetaTokenExpiredError, MetaFollowerCheckUnavailable
-)
+# Re-exported from server.app.integrations.instagram (single source of truth)
+import sys
+from pathlib import Path
 
-__all__ = [
-    "MetaGraphClient",
-    "InstagramComments",
-    "InstagramMessaging",
-    "InstagramFollowerService",
-    "FollowerStatus",
-    "MetaGraphAPIError",
-    "MetaRateLimitError",
-    "MetaTokenExpiredError",
-    "MetaFollowerCheckUnavailable"
-]
+REPO_ROOT = Path(__file__).resolve().parents[4]
+SERVER_DIR = REPO_ROOT / "server"
+if str(SERVER_DIR) not in sys.path:
+    sys.path.insert(0, str(SERVER_DIR))
+
+from server.app.integrations.instagram import *

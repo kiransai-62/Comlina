@@ -62,13 +62,26 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
                     continue
 
                 if resp.status_code == 200 and body.get("access_token"):
-                    account.access_token_encrypted = encrypt_token(body["access_token"])
+                    new_token = body["access_token"]
+                    account.access_token_encrypted = encrypt_token(new_token)
                     account.token_expires_at = curr_now + timedelta(seconds=body.get("expires_in", 5184000))
                     account.last_refreshed_at = curr_now
                     account.last_validated_at = curr_now
                     account.connection_status = "CONNECTED"
                     account.last_error_code = None
                     summary["refreshed"] += 1
+
+                    # F5: Re-subscribe to webhooks on token refresh so subscription stays healthy
+                    try:
+                        from app.integrations.instagram.oauth import MetaOAuth
+                        sub_res = await MetaOAuth.subscribe_app_to_account(new_token, account.ig_user_id)
+                        if sub_res.get("is_subscribed"):
+                            account.webhook_subscription_status = "SUBSCRIBED"
+                            account.webhook_subscribed_at = curr_now
+                        else:
+                            account.webhook_subscription_status = "FAILED"
+                    except Exception as sub_ex:
+                        logger.warning("Webhook re-subscription failed during refresh for %s: %s", account.id, sub_ex)
                 elif "24 hours" in str(body).lower():
                     account.last_refreshed_at = curr_now
                     account.last_validated_at = curr_now
@@ -103,3 +116,7 @@ async def refresh_expiring_tokens_job(ctx: Dict[str, Any]) -> Dict[str, int]:
 
     logger.info("Token refresh run completed: %s", summary)
     return summary
+
+
+# Alias for ARQ cron scheduler
+refresh_tokens_cron = refresh_expiring_tokens_job

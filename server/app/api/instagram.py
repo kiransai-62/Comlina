@@ -12,11 +12,23 @@ from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, func
+from sqlalchemy import select, func, update
 from app.core.database import get_db
 from app.core.config import settings
 from app.api.deps import get_current_workspace, require_workspace_owner, get_current_user
-from app.models import Workspace, InstagramAccount, Automation, User, WorkspaceMember
+from app.models import (
+    Workspace,
+    InstagramAccount,
+    Automation,
+    AutomationVersion,
+    User,
+    WorkspaceMember,
+    Contact,
+    Conversation,
+    Message,
+    PostUsage,
+    WebhookEvent,
+)
 from app.schemas import (
     InstagramAccountOut,
     ConnectAccountRequest,
@@ -421,12 +433,17 @@ def generate_oauth_state(workspace_id: uuid.UUID, user_id: Optional[uuid.UUID] =
     nonce = secrets.token_hex(16)
     uid_str = str(user_id) if user_id else "any"
     state_payload = f"{workspace_id}:{uid_str}:{timestamp}:{nonce}"
-    key = settings.get_primary_encryption_key() or settings.TOKEN_ENCRYPTION_KEY or "fallback_key"
+    key = settings.get_primary_encryption_key() or settings.TOKEN_ENCRYPTION_KEY or ""
+    if not key:
+        if settings.ENVIRONMENT == "production":
+            raise ValueError("TOKEN_ENCRYPTION_KEY is required in production to generate OAuth state")
+        key = "dev_deterministic_oauth_key"
+    # F11: Full 256-bit HMAC SHA-256 (64 hex characters)
     sig = hmac.new(
         key=key.encode("utf-8"),
         msg=state_payload.encode("utf-8"),
         digestmod=hashlib.sha256
-    ).hexdigest()[:16]
+    ).hexdigest()
     return f"{state_payload}:{sig}"
 
 def verify_oauth_state(
@@ -437,7 +454,11 @@ def verify_oauth_state(
 ) -> bool:
     try:
         parts = state.split(":")
-        keys = settings.get_encryption_keys() or [settings.TOKEN_ENCRYPTION_KEY or "fallback_key"]
+        keys = settings.get_encryption_keys() or ([settings.TOKEN_ENCRYPTION_KEY] if settings.TOKEN_ENCRYPTION_KEY else [])
+        if not keys:
+            if settings.ENVIRONMENT == "production":
+                return False
+            keys = ["dev_deterministic_oauth_key"]
 
         # 5-part state: ws_id:user_id:timestamp:nonce:sig
         if len(parts) == 5:
@@ -452,28 +473,29 @@ def verify_oauth_state(
                 return False
             state_payload = f"{ws_id_str}:{u_id_str}:{ts_str}:{nonce}"
             for k in keys:
-                expected_sig = hmac.new(
+                full_sig = hmac.new(
                     key=k.encode("utf-8"),
                     msg=state_payload.encode("utf-8"),
                     digestmod=hashlib.sha256
-                ).hexdigest()[:16]
-                if hmac.compare_digest(provided_sig, expected_sig):
+                ).hexdigest()
+                # Accept full 64-char HMAC or legacy 16-char truncated HMAC for in-flight tokens
+                if hmac.compare_digest(provided_sig, full_sig) or hmac.compare_digest(provided_sig, full_sig[:16]):
                     return True
             return False
 
-        # Legacy 3-part state: ws_id:nonce:sig (backwards compatibility)
-        elif len(parts) == 3:
+        # Legacy 3-part state: rejected in production; supported only in dev for backwards compatibility
+        elif len(parts) == 3 and settings.ENVIRONMENT != "production":
             ws_id_str, nonce, provided_sig = parts
             if ws_id_str != str(workspace_id):
                 return False
             state_payload = f"{ws_id_str}:{nonce}"
             for k in keys:
-                expected_sig = hmac.new(
+                full_sig = hmac.new(
                     key=k.encode("utf-8"),
                     msg=state_payload.encode("utf-8"),
                     digestmod=hashlib.sha256
-                ).hexdigest()[:16]
-                if hmac.compare_digest(provided_sig, expected_sig):
+                ).hexdigest()
+                if hmac.compare_digest(provided_sig, full_sig) or hmac.compare_digest(provided_sig, full_sig[:16]):
                     return True
             return False
 
@@ -577,6 +599,19 @@ async def handle_oauth_callback(
                 f"from previous workspace {existing_any.workspace_id} to current workspace {workspace.id}"
             )
             existing_any.workspace_id = workspace.id
+
+            # Atomic rebind cascade across all dependent entities
+            await db.execute(update(Automation).where(Automation.instagram_account_id == existing_any.id).values(workspace_id=workspace.id))
+            await db.execute(update(AutomationVersion).where(AutomationVersion.automation_id.in_(
+                select(Automation.id).where(Automation.instagram_account_id == existing_any.id)
+            )).values(workspace_id=workspace.id))
+            await db.execute(update(Contact).where(Contact.instagram_account_id == existing_any.id).values(workspace_id=workspace.id))
+            await db.execute(update(Conversation).where(Conversation.instagram_account_id == existing_any.id).values(workspace_id=workspace.id))
+            await db.execute(update(Message).where(Message.conversation_id.in_(
+                select(Conversation.id).where(Conversation.instagram_account_id == existing_any.id)
+            )).values(workspace_id=workspace.id))
+            await db.execute(update(PostUsage).where(PostUsage.instagram_account_id == existing_any.id).values(workspace_id=workspace.id))
+            await db.execute(update(WebhookEvent).where(WebhookEvent.instagram_account_id == existing_any.id).values(workspace_id=workspace.id))
         else:
             email_hint = f" (linked to {orig_email[:3]}***@{orig_email.split('@')[-1]})" if orig_email else ""
             logger.warning(
@@ -613,6 +648,20 @@ async def handle_oauth_callback(
         account.last_refreshed_at = now
         account.last_error_code = None
         account.updated_at = now
+
+        # Auto-resume any automations that were paused specifically due to account disconnect
+        stmt_resume = select(Automation).where(
+            Automation.instagram_account_id == account.id,
+            Automation.status == "PAUSED"
+        )
+        paused_autos = (await db.execute(stmt_resume)).scalars().all()
+        for auto in paused_autos:
+            if isinstance(auto.flow_definition, dict) and auto.flow_definition.get("_pause_reason") == "ACCOUNT_DISCONNECTED":
+                auto.status = "ACTIVE"
+                flow_copy = dict(auto.flow_definition)
+                flow_copy.pop("_pause_reason", None)
+                auto.flow_definition = flow_copy
+                logger.info(f"[INSTAGRAM] Auto-resumed automation '{auto.name}' ({auto.id}) upon account reconnect.")
     else:
         # Enforce workspace account limit
         stmt_count = select(func.count(InstagramAccount.id)).where(
@@ -958,7 +1007,7 @@ async def disconnect_instagram_account(
     account.last_error_code = None
     account.updated_at = datetime.now(timezone.utc)
 
-    # Pause any active automations associated with this disconnected account
+    # Pause any active automations associated with this disconnected account, tagging the reason
     stmt_pause = select(Automation).where(
         Automation.instagram_account_id == account.id,
         Automation.status == "ACTIVE"
@@ -966,6 +1015,9 @@ async def disconnect_instagram_account(
     active_autos = (await db.execute(stmt_pause)).scalars().all()
     for auto in active_autos:
         auto.status = "PAUSED"
+        flow_copy = dict(auto.flow_definition or {})
+        flow_copy["_pause_reason"] = "ACCOUNT_DISCONNECTED"
+        auto.flow_definition = flow_copy
 
     await db.commit()
     return None
