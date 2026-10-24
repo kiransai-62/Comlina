@@ -3,7 +3,7 @@
 # With OpenSSL SSL bootstrap and Certbot support
 # ==========================================
 
-FROM nginx:1.25.5-alpine
+FROM nginx:1.31.0-alpine
 
 RUN apk add --no-cache openssl inotify-tools
 
