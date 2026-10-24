@@ -57,9 +57,6 @@ app = FastAPI(
     openapi_url="/openapi.json" if settings.ENVIRONMENT == "development" else None,
 )
 
-@app.on_event("startup")
-async def on_startup_verify_encryption_keys():
-    await verify_encryption_keys()
 
 # 1. Security Headers (Outermost: guarantees OWASP headers on every response)
 app.add_middleware(SecurityHeadersMiddleware)

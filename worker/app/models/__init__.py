@@ -10,44 +10,24 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 # Single source of truth is server.app.models
-try:
-    from server.app.models import (
-        Base,
-        User,
-        Workspace,
-        WorkspaceMember,
-        InstagramAccount,
-        Automation,
-        AutomationVersion,
-        Contact,
-        Conversation,
-        Message,
-        WebhookEvent,
-        AnalyticsEvent,
-        PostUsage,
-        PaymentOrder,
-        AutomationRun,
-        utc_now,
-    )
-except ImportError:
-    from app.models import (
-        Base,
-        User,
-        Workspace,
-        WorkspaceMember,
-        InstagramAccount,
-        Automation,
-        AutomationVersion,
-        Contact,
-        Conversation,
-        Message,
-        WebhookEvent,
-        AnalyticsEvent,
-        PostUsage,
-        PaymentOrder,
-        AutomationRun,
-        utc_now,
-    )
+from server.app.models import (
+    Base,
+    User,
+    Workspace,
+    WorkspaceMember,
+    InstagramAccount,
+    Automation,
+    AutomationVersion,
+    Contact,
+    Conversation,
+    Message,
+    WebhookEvent,
+    AnalyticsEvent,
+    PostUsage,
+    PaymentOrder,
+    AutomationRun,
+    utc_now,
+)
 
 __all__ = [
     "Base",

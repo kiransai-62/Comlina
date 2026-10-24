@@ -220,6 +220,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "COMMENT_TO_LEAD",
     })
     assert valid is False
+    assert err is not None
     assert "Create Lead Flow requires a Pro plan" in err
 
     valid, err = PlanService.validate_automation_features(premium_ws, {
@@ -227,6 +228,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "DM_REPLY",
     })
     assert valid is False
+    assert err is not None
     assert "DM Reply Flow requires a Pro plan" in err
 
     valid, err = PlanService.validate_automation_features(premium_ws, {
@@ -234,6 +236,7 @@ def test_validate_automation_features_premium_and_pro():
         "type": "DM_TO_LEAD",
     })
     assert valid is False
+    assert err is not None
     assert "DM to Lead Collection requires a Pro plan" in err
 
     # Everything succeeds on Pro

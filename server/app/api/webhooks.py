@@ -483,7 +483,7 @@ async def verify_and_parse_signed_request(
 
 
 async def _accounts_for(db: AsyncSession, ig_user_id: str):
-    res = await db.execute(select(InstagramAccount).where(InstagramAccount.ig_user_id == str(ig_user_id)))
+    res = await db.execute(select(InstagramAccount).where(InstagramAccount.ig_user_id == ig_user_id))
     return list(res.scalars().all())
 
 

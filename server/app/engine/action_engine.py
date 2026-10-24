@@ -72,7 +72,7 @@ class ActionEngine:
                     "error_code": "MISSING_COMMENT_ID",
                 }
 
-            res = {"status": "SUCCESS", "action": "PUBLIC_REPLY", "text": formatted_text}
+            res: Dict[str, Any] = {"status": "SUCCESS", "action": "PUBLIC_REPLY", "text": formatted_text}
             try:
                 comments_client = InstagramComments(instagram_client)
                 api_res = await comments_client.reply_to_comment(comment_id, formatted_text)
@@ -114,7 +114,7 @@ class ActionEngine:
                     "error_code": "NO_CLIENT",
                 }
 
-            res = {"status": "SUCCESS", "action": "PRIVATE_DM", "text": formatted_text, "buttons": buttons}
+            res: Dict[str, Any] = {"status": "SUCCESS", "action": "PRIVATE_DM", "text": formatted_text, "buttons": buttons}
             try:
                 messaging_client = InstagramMessaging(instagram_client)
                 api_res = await messaging_client.send_private_reply(
@@ -155,7 +155,7 @@ class ActionEngine:
             tag = action_config.get("tag", "lead")
             contact_id = context.get("contact_id")
             logger.info(f"Executing TAG_CONTACT for contact {contact_id}: tag={tag}")
-            res = {"status": "SUCCESS", "action": "TAG_CONTACT", "tag": tag}
+            res: Dict[str, Any] = {"status": "SUCCESS", "action": "TAG_CONTACT", "tag": tag}
 
             contact_id = context.get("contact_id")
             if db_session and contact_id:

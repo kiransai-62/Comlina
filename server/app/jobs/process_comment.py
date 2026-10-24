@@ -42,7 +42,7 @@ async def reserve_quota(
     Replaces row-locking (with_for_update) to avoid serializing comment bursts.
     """
     acc_str = str(account_id)
-    evt_str = str(event_id)
+    evt_str = event_id
 
     # 1. Idempotent reservation check
     check_stmt = select(AutomationRun.id).where(
@@ -89,8 +89,8 @@ async def reserve_quota(
     account_cond = or_(*acc_filters)
 
     conditions = [account_cond]
-    if media_id and str(media_id).lower() not in ("all", "none", ""):
-        conditions.append(PostUsage.media_id == str(media_id))
+    if media_id and media_id.lower() not in ("all", "none", ""):
+        conditions.append(PostUsage.media_id == media_id)
 
     if max_dms is not None and max_dms != -1:
         conditions.append(PostUsage.dms_delivered_count < max_dms)
@@ -113,8 +113,8 @@ async def reserve_quota(
     # 4. If no row was updated, check if row exists (quota exhausted vs new row needed)
     if not reservation:
         find_conds = [account_cond]
-        if media_id and str(media_id).lower() not in ("all", "none", ""):
-            find_conds.append(PostUsage.media_id == str(media_id))
+        if media_id and media_id.lower() not in ("all", "none", ""):
+            find_conds.append(PostUsage.media_id == media_id)
 
         chk_stmt = select(PostUsage.id, PostUsage.dms_delivered_count, PostUsage.max_dms).where(*find_conds)
         chk_res = await db_session.execute(chk_stmt)
@@ -127,7 +127,7 @@ async def reserve_quota(
         if max_dms is not None and max_dms <= 0:
             return False
 
-        m_id = str(media_id) if (media_id and str(media_id).lower() not in ("all", "none", "")) else "default"
+        m_id = media_id if (media_id and media_id.lower() not in ("all", "none", "")) else "default"
         new_usage = PostUsage(
             id=uuid.uuid4(),
             workspace_id=ws_uuid,
@@ -183,8 +183,8 @@ async def rollback_quota(db_session, account_id: Any, media_id: Optional[str] = 
     account_cond = or_(*acc_filters)
 
     conditions = [account_cond]
-    if media_id and str(media_id).lower() not in ("all", "none", ""):
-        conditions.append(PostUsage.media_id == str(media_id))
+    if media_id and media_id.lower() not in ("all", "none", ""):
+        conditions.append(PostUsage.media_id == media_id)
 
     stmt = (
         update(PostUsage)
@@ -539,7 +539,7 @@ async def process_comment_job(
                             workspace_id=account.workspace_id,
                             instagram_account_id=account.id,
                             ig_account_id=str(account.id),
-                            event_id=str(event_id),
+                            event_id=event_id,
                             automation_id=auto.id,
                             action=str(act_res.get("action") or "UNKNOWN"),
                             status=str(act_status or "UNKNOWN"),
