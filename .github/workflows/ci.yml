@@ -87,7 +87,9 @@ jobs:
 
       - name: Run Worker Tests
         env:
+          ENVIRONMENT: development
           TOKEN_ENCRYPTION_KEY: -YSQRVH6AHTJ1PMLC9Y53jfzV1Ytu4EUWZ7c4qJDbco=
+          PYTHONPATH: ..:../server:.
         run: |
           cd worker
           python -m pytest tests/ -v -o pythonpath=.

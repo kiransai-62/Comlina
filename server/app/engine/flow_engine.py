@@ -1,9 +1,9 @@
 # server/app/engine/flow_engine.py
 import logging
 from typing import Dict, Any, List, Optional
-from app.engine.trigger_engine import TriggerEngine
-from app.engine.condition_engine import ConditionEngine
-from app.engine.action_engine import ActionEngine
+from .trigger_engine import TriggerEngine
+from .condition_engine import ConditionEngine
+from .action_engine import ActionEngine
 from app.integrations.instagram.follower_status import InstagramFollowerService
 
 logger = logging.getLogger("flow_engine")

@@ -1,10 +1,10 @@
-from app.integrations.instagram.client import MetaGraphClient
-from app.integrations.instagram.oauth import MetaOAuth
-from app.integrations.instagram.webhooks import InstagramWebhookParser
-from app.integrations.instagram.messaging import InstagramMessaging
-from app.integrations.instagram.comments import InstagramComments
-from app.integrations.instagram.follower_status import InstagramFollowerService, FollowerStatus
-from app.integrations.instagram.exceptions import (
+from .client import MetaGraphClient
+from .oauth import MetaOAuth
+from .webhooks import InstagramWebhookParser
+from .messaging import InstagramMessaging
+from .comments import InstagramComments
+from .follower_status import InstagramFollowerService, FollowerStatus
+from .exceptions import (
     MetaGraphAPIError, MetaRateLimitError, MetaTokenExpiredError, MetaFollowerCheckUnavailable
 )
 

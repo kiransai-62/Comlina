@@ -133,6 +133,7 @@ class WorkerSettings(BaseSettings):
                 raise ValueError("Worker production error: TOKEN_ENCRYPTION_KEY must be a valid 32-byte urlsafe base64-encoded key")
 
 worker_settings = WorkerSettings()
+settings = worker_settings
 
 if worker_settings.ENVIRONMENT == "production":
     worker_settings.validate_production_secrets()

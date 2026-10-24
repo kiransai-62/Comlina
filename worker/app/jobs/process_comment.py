@@ -9,3 +9,4 @@ if str(SERVER_DIR) not in sys.path:
     sys.path.insert(0, str(SERVER_DIR))
 
 from server.app.jobs.process_comment import *
+from server.app.jobs.process_comment import _update_webhook_event
