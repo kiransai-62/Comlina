@@ -124,6 +124,7 @@ AsyncSessionLocal = async_sessionmaker(
     expire_on_commit=False,
     class_=AsyncSession
 )
+SessionLocal = AsyncSessionLocal
 
 async def _apply_schema_patches(conn) -> None:
     """Idempotently add newly added columns across both PostgreSQL and SQLite without data loss."""
@@ -150,6 +151,10 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS automation_state VARCHAR(64);
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_contacts_automation_state ON contacts(automation_state);"))
+            # F13 fix: dedicated password_hash column so profile updates cannot overwrite auth material
+            await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(512);"))
+            await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 1;"))
+            await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;"))
         elif dialect_name == "sqlite":
             res = await conn.execute(text("PRAGMA table_info(instagram_accounts)"))
             existing_cols = {row[1] for row in res.fetchall()}
@@ -174,21 +179,29 @@ async def _apply_schema_patches(conn) -> None:
             contact_cols = {row[1] for row in res_c.fetchall()}
             if "automation_state" not in contact_cols:
                 await conn.execute(text("ALTER TABLE contacts ADD COLUMN automation_state TEXT"))
+
+            # F13 fix: dedicated password_hash column so profile updates cannot overwrite auth material
+            res_u = await conn.execute(text("PRAGMA table_info(users)"))
+            user_cols = {row[1] for row in res_u.fetchall()}
+            if "password_hash" not in user_cols:
+                await conn.execute(text("ALTER TABLE users ADD COLUMN password_hash TEXT"))
+
+            res_w = await conn.execute(text("PRAGMA table_info(webhook_events)"))
+            wh_cols = {row[1] for row in res_w.fetchall()}
+            if "attempt_count" not in wh_cols:
+                await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN attempt_count INTEGER DEFAULT 1"))
+            if "updated_at" not in wh_cols:
+                await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN updated_at TIMESTAMP"))
     except Exception as patch_err:
         logger.debug(f"[DB] Schema patch check notice: {patch_err}")
 
 _initialized = False
-_init_lock: Optional[asyncio.Lock] = None
 
 async def _ensure_db_initialized() -> None:
-    global _initialized, _init_lock
+    global _initialized
     if not _initialized:
-        if _init_lock is None:
-            _init_lock = asyncio.Lock()
-        async with _init_lock:
-            if not _initialized:
-                await init_db()
-                _initialized = True
+        await init_db()
+        _initialized = True
 
 async def init_db() -> None:
     """Ensure database tables exist and schema patches are applied."""

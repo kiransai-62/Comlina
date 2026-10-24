@@ -269,6 +269,7 @@ async def test_process_comment_quota_enforcement():
         "business_ig_id": biz_ig_id
     }
 
-    result = await process_comment_job({}, "evt_quota_test", event_data)
+    evt_id = f"evt_quota_{uuid.uuid4().hex[:8]}"
+    result = await process_comment_job({}, evt_id, event_data)
     assert result["status"] == "QUOTA_EXCEEDED"
     assert "DM_QUOTA_EXCEEDED" in result["reason"]

@@ -3,7 +3,7 @@ import uuid
 import logging
 from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
-from sqlalchemy import select, func
+from sqlalchemy import select, update, or_, case, func, text
 
 from app.core.database import get_db_session
 from app.core.encryption import decrypt_token
@@ -14,16 +14,192 @@ from app.integrations.instagram.client import MetaGraphClient
 from app.models import (
     InstagramAccount,
     Automation,
+    AutomationVersion,
     Contact,
     Conversation,
     Message,
     WebhookEvent,
     AnalyticsEvent,
     Workspace,
-    PostUsage
+    PostUsage,
+    AutomationRun
 )
 
 logger = logging.getLogger("process_comment")
+
+
+async def reserve_quota(
+    db_session,
+    account_id: Any,
+    event_id: str,
+    automation_id: Optional[Any] = None,
+    media_id: Optional[str] = None,
+    max_dms: Optional[int] = None,
+    workspace_id: Optional[Any] = None
+) -> bool:
+    """
+    Idempotent atomic quota reservation keyed by event_id to prevent double-counting on ARQ retries.
+    Replaces row-locking (with_for_update) to avoid serializing comment bursts.
+    """
+    acc_str = str(account_id)
+    evt_str = str(event_id)
+
+    # 1. Idempotent reservation check
+    check_stmt = select(AutomationRun.id).where(
+        AutomationRun.event_id == evt_str,
+        AutomationRun.action == "QUOTA_RESERVED"
+    )
+    check_res = await db_session.execute(check_stmt)
+    if check_res.scalar_one_or_none():
+        return True
+
+    # 2. Build account filter supporting both UUID and string forms
+    acc_uuid = None
+    if isinstance(account_id, uuid.UUID):
+        acc_uuid = account_id
+    else:
+        try:
+            acc_uuid = uuid.UUID(acc_str)
+        except (ValueError, TypeError):
+            pass
+
+    auto_uuid = None
+    if automation_id:
+        if isinstance(automation_id, uuid.UUID):
+            auto_uuid = automation_id
+        else:
+            try:
+                auto_uuid = uuid.UUID(str(automation_id))
+            except (ValueError, TypeError):
+                pass
+
+    ws_uuid = None
+    if workspace_id:
+        if isinstance(workspace_id, uuid.UUID):
+            ws_uuid = workspace_id
+        else:
+            try:
+                ws_uuid = uuid.UUID(str(workspace_id))
+            except (ValueError, TypeError):
+                pass
+
+    acc_filters = [PostUsage.ig_account_id == acc_str]
+    if acc_uuid:
+        acc_filters.append(PostUsage.instagram_account_id == acc_uuid)
+    account_cond = or_(*acc_filters)
+
+    conditions = [account_cond]
+    if media_id and str(media_id).lower() not in ("all", "none", ""):
+        conditions.append(PostUsage.media_id == str(media_id))
+
+    if max_dms is not None and max_dms != -1:
+        conditions.append(PostUsage.dms_delivered_count < max_dms)
+    conditions.append(or_(PostUsage.max_dms.is_(None), PostUsage.dms_delivered_count < PostUsage.max_dms))
+
+    # 3. Atomic update using returning
+    update_stmt = (
+        update(PostUsage)
+        .where(*conditions)
+        .values(
+            dms_delivered_count=PostUsage.dms_delivered_count + 1,
+            last_delivered_at=func.now(),
+            updated_at=func.now()
+        )
+        .returning(PostUsage.id)
+    )
+    result = await db_session.execute(update_stmt)
+    reservation = result.scalar()
+
+    # 4. If no row was updated, check if row exists (quota exhausted vs new row needed)
+    if not reservation:
+        find_conds = [account_cond]
+        if media_id and str(media_id).lower() not in ("all", "none", ""):
+            find_conds.append(PostUsage.media_id == str(media_id))
+
+        chk_stmt = select(PostUsage.id, PostUsage.dms_delivered_count, PostUsage.max_dms).where(*find_conds)
+        chk_res = await db_session.execute(chk_stmt)
+        existing = chk_res.first()
+        if existing:
+            # Row exists but failed quota cap check
+            return False
+
+        # Row doesn't exist yet, insert with initial count 1 if within limit
+        if max_dms is not None and max_dms <= 0:
+            return False
+
+        m_id = str(media_id) if (media_id and str(media_id).lower() not in ("all", "none", "")) else "default"
+        new_usage = PostUsage(
+            id=uuid.uuid4(),
+            workspace_id=ws_uuid,
+            instagram_account_id=acc_uuid,
+            ig_account_id=acc_str,
+            media_id=m_id,
+            dms_delivered_count=1,
+            max_dms=max_dms,
+            last_delivered_at=datetime.now(timezone.utc)
+        )
+        db_session.add(new_usage)
+        try:
+            await db_session.flush()
+            reservation = new_usage.id
+        except Exception:
+            retry_res = await db_session.execute(update_stmt)
+            reservation = retry_res.scalar()
+
+    if reservation:
+        auto_run = AutomationRun(
+            id=uuid.uuid4(),
+            workspace_id=ws_uuid,
+            instagram_account_id=acc_uuid,
+            ig_account_id=acc_str,
+            event_id=evt_str,
+            automation_id=auto_uuid,
+            action="QUOTA_RESERVED",
+            status="SUCCESS",
+            attempt=1,
+            created_at=datetime.now(timezone.utc)
+        )
+        db_session.add(auto_run)
+        await db_session.commit()
+        return True
+
+    return False
+
+
+async def rollback_quota(db_session, account_id: Any, media_id: Optional[str] = None):
+    acc_str = str(account_id)
+    acc_uuid = None
+    if isinstance(account_id, uuid.UUID):
+        acc_uuid = account_id
+    else:
+        try:
+            acc_uuid = uuid.UUID(acc_str)
+        except (ValueError, TypeError):
+            pass
+
+    acc_filters = [PostUsage.ig_account_id == acc_str]
+    if acc_uuid:
+        acc_filters.append(PostUsage.instagram_account_id == acc_uuid)
+    account_cond = or_(*acc_filters)
+
+    conditions = [account_cond]
+    if media_id and str(media_id).lower() not in ("all", "none", ""):
+        conditions.append(PostUsage.media_id == str(media_id))
+
+    stmt = (
+        update(PostUsage)
+        .where(*conditions)
+        .values(
+            dms_delivered_count=case(
+                (PostUsage.dms_delivered_count > 0, PostUsage.dms_delivered_count - 1),
+                else_=0
+            ),
+            updated_at=func.now()
+        )
+    )
+    await db_session.execute(stmt)
+    await db_session.commit()
+
 
 async def _update_webhook_event(session, event_id: str, provider_id: Optional[str], status: str, error: Optional[str] = None):
     webhook_event = None
@@ -104,6 +280,31 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 return execution_summary
 
+            # Guard: reject inactive or disconnected accounts before doing any work.
+            if not account.is_active or account.connection_status not in ("CONNECTED", "UNKNOWN"):
+                logger.warning(
+                    f"Skipping event {event_id}: account {account.id} is inactive or disconnected "
+                    f"(is_active={account.is_active}, connection_status={account.connection_status})."
+                )
+                execution_summary["status"] = "IGNORED"
+                execution_summary["reason"] = "ACCOUNT_INACTIVE"
+                log_diagnostic_event(
+                    stage="job_processed",
+                    correlation_id=event_data.get("provider_event_id") or event_id,
+                    event_type="COMMENT",
+                    workspace_id=str(account.workspace_id),
+                    account_id=str(account.id),
+                    error_code="ACCOUNT_INACTIVE",
+                    details={
+                        "is_active": account.is_active,
+                        "connection_status": account.connection_status,
+                    }
+                )
+                await _update_webhook_event(
+                    session, event_id, event_data.get("provider_event_id"), "IGNORED", "Account inactive or disconnected"
+                )
+                return execution_summary
+
             # Defense-in-depth: Skip self-comment if commenter is the account itself
             commenter_id = event_data.get("sender_id")
             if commenter_id and account and str(commenter_id) == account.ig_user_id:
@@ -170,47 +371,55 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 return execution_summary
 
-            # 2.5 Enforce Workspace Plan Quota & Limits with row-level locks
-            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id).with_for_update()
+            # 2.5 Enforce Workspace Plan Quota & Limits atomically without row-level locks
+            stmt_ws = select(Workspace).where(Workspace.id == account.workspace_id)
             res_ws = await session.execute(stmt_ws)
             workspace = res_ws.scalar_one_or_none()
             tier = (workspace.plan_tier or "FREE").upper() if workspace else "FREE"
             plan_cfg = get_plan_config(tier)
 
             media_id = str(event_data.get("post_id") or event_data.get("media_id") or "").strip()
-            post_usage: Optional[PostUsage] = None
+            max_dms = plan_cfg.get("max_dms_per_post", 99)
+            max_posts = plan_cfg.get("max_posts_quota", 10)
+            quota_reserved = False
 
             if media_id and media_id.lower() not in ("all", "none", ""):
-                stmt_post = select(PostUsage).where(
-                    PostUsage.workspace_id == account.workspace_id,
-                    PostUsage.media_id == media_id
-                ).with_for_update()
-                res_post = await session.execute(stmt_post)
-                post_usage = res_post.scalars().first()
-
-                max_posts = plan_cfg.get("max_posts_quota", 10)
-                if not post_usage and max_posts != -1:
+                if max_posts != -1:
                     cnt_stmt = select(func.count(PostUsage.id)).where(PostUsage.workspace_id == account.workspace_id)
                     cnt_res = await session.execute(cnt_stmt)
                     current_post_count = cnt_res.scalar() or 0
                     if current_post_count >= max_posts:
-                        logger.warning(
-                            f"Post quota limit reached ({current_post_count}/{max_posts}) for workspace {account.workspace_id}. "
-                            f"Ignoring comment for media {media_id}."
+                        chk_post = await session.execute(
+                            select(PostUsage.id).where(
+                                PostUsage.workspace_id == account.workspace_id,
+                                PostUsage.media_id == media_id
+                            )
                         )
-                        execution_summary["status"] = "QUOTA_EXCEEDED"
-                        execution_summary["reason"] = f"POST_QUOTA_EXCEEDED: max {max_posts} posts allowed on {plan_cfg.get('name', 'Free')} plan"
-                        await _update_webhook_event(
-                            session, event_id, event_data.get("provider_event_id"), "IGNORED", execution_summary["reason"]
-                        )
-                        return execution_summary
+                        if not chk_post.scalar_one_or_none():
+                            logger.warning(
+                                f"Post quota limit reached ({current_post_count}/{max_posts}) for workspace {account.workspace_id}. "
+                                f"Ignoring comment for media {media_id}."
+                            )
+                            execution_summary["status"] = "QUOTA_EXCEEDED"
+                            execution_summary["reason"] = f"POST_QUOTA_EXCEEDED: max {max_posts} posts allowed on {plan_cfg.get('name', 'Free')} plan"
+                            await _update_webhook_event(
+                                session, event_id, event_data.get("provider_event_id"), "IGNORED", execution_summary["reason"]
+                            )
+                            return execution_summary
 
-                # Check max DMs per post
-                max_dms = plan_cfg.get("max_dms_per_post", 99)
-                current_dms = post_usage.dms_delivered_count if post_usage else 0
-                if current_dms >= max_dms:
+                # Atomically reserve quota upfront without locking
+                reserved = await reserve_quota(
+                    session,
+                    account_id=account.id,
+                    event_id=event_id,
+                    automation_id=automations[0].id if automations else None,
+                    media_id=media_id,
+                    max_dms=max_dms,
+                    workspace_id=account.workspace_id
+                )
+                if not reserved:
                     logger.warning(
-                        f"DM quota per post reached ({current_dms}/{max_dms}) for post {media_id}. Ignoring comment."
+                        f"DM quota per post reached for post {media_id}. Ignoring comment."
                     )
                     execution_summary["status"] = "QUOTA_EXCEEDED"
                     execution_summary["reason"] = f"DM_QUOTA_EXCEEDED: max {max_dms} DMs per post allowed on {plan_cfg.get('name', 'Free')} plan"
@@ -218,6 +427,7 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                         session, event_id, event_data.get("provider_event_id"), "IGNORED", execution_summary["reason"]
                     )
                     return execution_summary
+                quota_reserved = True
 
             # 2.6 Resolve Contact & Pre-cache follower status if already verified
             contact = None
@@ -241,9 +451,30 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
             event_data["business_username"] = account.username
             event_data["account_username"] = account.username
 
+            any_action_failed = False
+            first_failure_error = None
+            transient_error = None
+            dm_delivered_count = 0
+
             for auto in automations:
+                # F6: Execute the latest published snapshot from automation_versions if available
+                flow_def = auto.flow_definition
+                stmt_ver = (
+                    select(AutomationVersion.flow_definition)
+                    .where(
+                        AutomationVersion.automation_id == auto.id,
+                        AutomationVersion.workspace_id == account.workspace_id
+                    )
+                    .order_by(AutomationVersion.version.desc())
+                    .limit(1)
+                )
+                res_ver = await session.execute(stmt_ver)
+                latest_snapshot = res_ver.scalar_one_or_none()
+                if latest_snapshot and isinstance(latest_snapshot, dict):
+                    flow_def = latest_snapshot
+
                 res = await FlowEngine.run_flow(
-                    auto.flow_definition,
+                    flow_def,
                     event_data,
                     instagram_client=meta_client,
                     db_session=session
@@ -291,26 +522,61 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                                 "status": act_res.get("status"),
                             }
                         )
-                        if act_res.get("status") == "SUCCESS":
+                        act_status = act_res.get("status")
+                        job_try = ctx.get("job_try", 1) if isinstance(ctx, dict) else 1
+                        run_entry = AutomationRun(
+                            workspace_id=account.workspace_id,
+                            instagram_account_id=account.id,
+                            ig_account_id=str(account.id),
+                            event_id=str(event_id),
+                            automation_id=auto.id,
+                            action=str(act_res.get("action") or "UNKNOWN"),
+                            status=str(act_status or "UNKNOWN"),
+                            attempt=job_try,
+                            meta_error_code=str(act_res.get("error_code")) if act_res.get("error_code") else None,
+                            meta_error_subcode=str(act_res.get("error_subcode")) if act_res.get("error_subcode") else None,
+                            error_message=redact_string(str(act_res.get("error")))[:1000] if act_res.get("error") else None,
+                            created_at=datetime.now(timezone.utc)
+                        )
+                        session.add(run_entry)
+
+                        if act_status == "FAILED":
+                            any_action_failed = True
+                            err_msg = act_res.get("error", "Action execution failed")
+                            if not first_failure_error:
+                                first_failure_error = err_msg
+                            err_code = act_res.get("error_code")
+                            if err_code == 190 or "expired" in str(err_msg).lower():
+                                account.connection_status = "REAUTHORIZATION_REQUIRED"
+                                account.last_error_code = "TOKEN_EXPIRED"
+                            elif err_code in (4, 17, 32, 613) or act_res.get("http_status") in (429, 500, 502, 503, 504) or "network" in str(err_msg).lower():
+                                transient_error = err_msg
+                            
+                            # Rollback reserved quota on permanent DM failure
+                            if act_res.get("action") == "PRIVATE_DM" and quota_reserved and not transient_error:
+                                await rollback_quota(session, account_id=account.id, media_id=media_id)
+                                quota_reserved = False
+                        elif act_status == "SUCCESS":
                             if act_res.get("action") == "PUBLIC_REPLY":
                                 auto.stats_comments = (auto.stats_comments or 0) + 1
                             elif act_res.get("action") == "PRIVATE_DM":
-                                auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
-                                # Atomically track verified DM delivery on PostUsage
-                                if media_id and media_id.lower() not in ("all", "none", ""):
-                                    if not post_usage:
-                                        post_usage = PostUsage(
-                                            id=uuid.uuid4(),
-                                            workspace_id=account.workspace_id,
-                                            instagram_account_id=account.id,
-                                            media_id=media_id,
-                                            dms_delivered_count=1,
-                                            last_delivered_at=datetime.now(timezone.utc)
-                                        )
-                                        session.add(post_usage)
-                                    else:
-                                        post_usage.dms_delivered_count = (post_usage.dms_delivered_count or 0) + 1
-                                        post_usage.last_delivered_at = datetime.now(timezone.utc)
+                                verified_msg_id = act_res.get("verified_message_id")
+                                if verified_msg_id:
+                                    auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
+                                    dm_delivered_count += 1
+                                else:
+                                    logger.warning(
+                                        f"PRIVATE_DM stat NOT incremented for automation {auto.id}: "
+                                        f"no verified_message_id in action result (status={act_status}). "
+                                        "Delivery unconfirmed."
+                                    )
+                                    if quota_reserved:
+                                        await rollback_quota(session, account_id=account.id, media_id=media_id)
+                                        quota_reserved = False
+
+            if quota_reserved and dm_delivered_count == 0 and not transient_error:
+                await rollback_quota(session, account_id=account.id, media_id=media_id)
+                quota_reserved = False
 
             # 3. Contact Auto-Creation / Upsert with Follower & Automation States
             if account and commenter_id:
@@ -443,8 +709,23 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
                 )
                 session.add(analytics_event)
 
-            # 6. Update WebhookEvent status = PROCESSED
-            await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "PROCESSED")
+            # F4: If any transient error occurred and ARQ attempts remain, raise for worker backoff retry
+            job_try = ctx.get("job_try", 1) if isinstance(ctx, dict) else 1
+            if transient_error and job_try < 3:
+                logger.warning(
+                    f"Transient Meta error in comment job for event {event_id} (attempt {job_try}/3). "
+                    f"Re-raising to trigger ARQ backoff retry: {transient_error}"
+                )
+                from app.integrations.instagram.exceptions import MetaGraphAPIError
+                raise MetaGraphAPIError(transient_error, is_transient=True)
+
+            # 6. Update WebhookEvent status based on action results
+            if any_action_failed:
+                execution_summary["status"] = "FAILED"
+                execution_summary["error"] = first_failure_error
+                await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "FAILED", first_failure_error)
+            else:
+                await _update_webhook_event(session, event_id, event_data.get("provider_event_id"), "PROCESSED")
 
             log_diagnostic_event(
                 stage="job_processed",
@@ -461,6 +742,15 @@ async def process_comment_job(ctx: Dict[str, Any], event_id: str, event_data: Di
             )
 
     except Exception as ex:
+        # F4: Re-raise transient exceptions if ARQ retries remain
+        is_transient = getattr(ex, "is_transient", False)
+        job_try = ctx.get("job_try", 1) if isinstance(ctx, dict) else 1
+        if is_transient and job_try < 3:
+            logger.warning(
+                f"Transient exception in comment job for event {event_id} (attempt {job_try}/3). "
+                f"Re-raising for ARQ retry: {ex}"
+            )
+            raise
         logger.error(f"Error processing comment event {event_id}: {ex}", exc_info=True)
         execution_summary["status"] = "FAILED"
         execution_summary["error"] = redact_string(str(ex))
