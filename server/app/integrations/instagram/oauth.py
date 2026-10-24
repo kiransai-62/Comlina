@@ -288,7 +288,7 @@ class MetaOAuth:
                 except Exception:
                     body = {"error": {"message": redact_string(resp.text[:300] if resp.text else "")}}
 
-                if resp.status_code == 200 and isinstance(body, dict) and "error" not in body:
+                if resp.status_code == 200 and isinstance(body, dict) and "error" not in body and (body.get("success") is True or "data" in body):
                     fields_list = [f.strip() for f in fields.split(",") if f.strip()]
                     logger.info(f"[OAUTH] Successfully subscribed app to account {ig_user_id}: status={resp.status_code} body={redact_data(body)}")
                     return {
@@ -318,4 +318,19 @@ class MetaOAuth:
             }
 
     fetch_profile = fetch_instagram_profile
+
+
+async def subscribe_app_to_account(ig_user_id: str, access_token: str) -> bool:
+    """Verifies the exact 'success' boolean rather than ignoring the response."""
+    async with httpx.AsyncClient(timeout=15.0) as client:
+        res = await client.post(
+            f"https://graph.facebook.com/v19.0/{ig_user_id}/subscribed_apps",
+            params={"subscribed_fields": "comments,messages", "access_token": access_token}
+        )
+        try:
+            data = res.json()
+            return data.get("success") is True
+        except Exception:
+            return False
+
 

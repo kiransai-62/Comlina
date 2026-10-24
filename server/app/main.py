@@ -28,10 +28,22 @@ from app.api.instagram import router as instagram_router
 from app.api.webhooks import router as webhooks_router
 from app.api.payments import router as payments_router
 
+async def verify_encryption_keys():
+    if settings.ENVIRONMENT == "production":
+        if not settings.TOKEN_ENCRYPTION_KEYS:
+            raise RuntimeError("CRITICAL: TOKEN_ENCRYPTION_KEYS missing in production. Halting startup.")
+        try:
+            # Test decryption of a known literal to verify Fernet initialization
+            from app.core.encryption import decrypt_token, encrypt_token
+            assert decrypt_token(encrypt_token("healthcheck")) == "healthcheck"
+        except Exception as e:
+            raise RuntimeError("CRITICAL: Token decryption healthcheck failed. Check key rotation.") from e
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Application startup: verify database tables and ensure logging setup
     setup_logging(force_json=(settings.ENVIRONMENT == "production"))
+    await verify_encryption_keys()
     await init_db()
     yield
     # Application shutdown
@@ -44,6 +56,10 @@ app = FastAPI(
     redoc_url="/redoc" if settings.ENVIRONMENT == "development" else None,
     openapi_url="/openapi.json" if settings.ENVIRONMENT == "development" else None,
 )
+
+@app.on_event("startup")
+async def on_startup_verify_encryption_keys():
+    await verify_encryption_keys()
 
 # 1. Security Headers (Outermost: guarantees OWASP headers on every response)
 app.add_middleware(SecurityHeadersMiddleware)
