@@ -192,6 +192,67 @@ async def _apply_schema_patches(conn) -> None:
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(512);"))
             await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 1;"))
             await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;"))
+
+            # RLS Helper functions: Safe dual-context resolver (Supabase auth.uid() + FastAPI app.current_user_id)
+            try:
+                await conn.execute(text("""
+                    CREATE OR REPLACE FUNCTION public.current_app_user_id()
+                    RETURNS UUID
+                    LANGUAGE plpgsql
+                    STABLE
+                    SECURITY DEFINER
+                    SET search_path = public
+                    AS $$
+                    DECLARE
+                        raw_setting TEXT;
+                        supa_uid UUID;
+                    BEGIN
+                        BEGIN
+                            supa_uid := auth.uid();
+                            IF supa_uid IS NOT NULL THEN
+                                RETURN supa_uid;
+                            END IF;
+                        EXCEPTION WHEN OTHERS THEN
+                            supa_uid := NULL;
+                        END;
+
+                        raw_setting := NULLIF(BTRIM(current_setting('app.current_user_id', true)), '');
+                        IF raw_setting IS NULL THEN
+                            RETURN NULL;
+                        END IF;
+
+                        RETURN raw_setting::UUID;
+                    EXCEPTION WHEN OTHERS THEN
+                        RETURN NULL;
+                    END;
+                    $$;
+
+                    CREATE OR REPLACE FUNCTION public.is_workspace_member(ws_id UUID)
+                    RETURNS BOOLEAN
+                    LANGUAGE plpgsql
+                    STABLE
+                    SECURITY DEFINER
+                    SET search_path = public
+                    AS $$
+                    DECLARE
+                        active_uid UUID;
+                    BEGIN
+                        active_uid := public.current_app_user_id();
+                        IF active_uid IS NULL OR ws_id IS NULL THEN
+                            RETURN FALSE;
+                        END IF;
+
+                        RETURN EXISTS (
+                            SELECT 1
+                            FROM public.workspace_members wm
+                            WHERE wm.workspace_id = ws_id
+                              AND wm.user_id = active_uid
+                        );
+                    END;
+                    $$;
+                """))
+            except Exception as rls_err:
+                logger.debug(f"[DB] RLS function patch notice: {rls_err}")
         elif dialect_name == "sqlite":
             res = await conn.execute(text("PRAGMA table_info(instagram_accounts)"))
             existing_cols = {row[1] for row in res.fetchall()}
