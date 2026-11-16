@@ -192,6 +192,7 @@ async def _apply_schema_patches(conn) -> None:
             await conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS password_hash VARCHAR(512);"))
             await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS attempt_count INTEGER DEFAULT 1;"))
             await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;"))
+            await conn.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS settings JSONB NOT NULL DEFAULT '{}'::jsonb;"))
 
             # RLS Helper functions: Safe dual-context resolver (Supabase auth.uid() + FastAPI app.current_user_id)
             try:
@@ -340,6 +341,11 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN attempt_count INTEGER DEFAULT 1"))
             if "updated_at" not in wh_cols:
                 await conn.execute(text("ALTER TABLE webhook_events ADD COLUMN updated_at TIMESTAMP"))
+
+            res_ws = await conn.execute(text("PRAGMA table_info(workspaces)"))
+            ws_cols = {row[1] for row in res_ws.fetchall()}
+            if "settings" not in ws_cols:
+                await conn.execute(text("ALTER TABLE workspaces ADD COLUMN settings TEXT DEFAULT '{}'"))
     except Exception as patch_err:
         logger.debug(f"[DB] Schema patch check notice: {patch_err}")
 

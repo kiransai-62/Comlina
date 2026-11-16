@@ -178,3 +178,87 @@ class AnalyticsService:
             "total_contacts": total_leads,
         }
 
+    @staticmethod
+    async def get_timeseries(db: AsyncSession, workspace_id: uuid.UUID, days: int = 30) -> Dict[str, Any]:
+        days = max(1, min(days, 365))
+        now = datetime.now(timezone.utc)
+        start_date = (now - timedelta(days=days - 1)).replace(hour=0, minute=0, second=0, microsecond=0)
+
+        # 1. Fetch outgoing messages within period
+        stmt_msgs = select(Message.created_at).where(
+            Message.workspace_id == workspace_id,
+            Message.sender_type.in_(["BOT", "INSTAGRAM_ACCOUNT"]),
+            Message.created_at >= start_date
+        )
+        res_msgs = await db.execute(stmt_msgs)
+        msg_timestamps = [_normalize_dt(r[0]) for r in res_msgs.all() if r[0]]
+
+        # 2. Fetch comment events within period
+        stmt_cmts = select(WebhookEvent.received_at).where(
+            WebhookEvent.workspace_id == workspace_id,
+            WebhookEvent.event_type.in_(["COMMENT", "COMMENTS", "FEED"]),
+            WebhookEvent.received_at >= start_date
+        )
+        res_cmts = await db.execute(stmt_cmts)
+        cmt_timestamps = [_normalize_dt(r[0]) for r in res_cmts.all() if r[0]]
+
+        # 3. Fetch analytics/lead events within period
+        stmt_anlt = select(AnalyticsEvent.created_at).where(
+            AnalyticsEvent.workspace_id == workspace_id,
+            AnalyticsEvent.created_at >= start_date
+        )
+        res_anlt = await db.execute(stmt_anlt)
+        anlt_timestamps = [_normalize_dt(r[0]) for r in res_anlt.all() if r[0]]
+
+        # 4. Generate day buckets
+        series: List[Dict[str, Any]] = []
+        total_comments = 0
+        total_dms = 0
+        total_conversions = 0
+
+        for i in range(days):
+            d_start = start_date + timedelta(days=i)
+            d_end = d_start + timedelta(days=1)
+
+            d_cmts = sum(1 for t in cmt_timestamps if t and d_start <= t < d_end)
+            d_dms = sum(1 for t in msg_timestamps if t and d_start <= t < d_end)
+            d_convs = sum(1 for t in anlt_timestamps if t and d_start <= t < d_end)
+
+            total_comments += d_cmts
+            total_dms += d_dms
+            total_conversions += d_convs
+
+            day_total = d_cmts + d_dms + d_convs
+
+            series.append({
+                "date": d_start.strftime("%Y-%m-%d"),
+                "day": d_start.strftime("%a"),
+                "short_date": d_start.strftime("%b %d"),
+                "comments": d_cmts,
+                "dms": d_dms,
+                "conversions": d_convs,
+                "total": day_total,
+                "pct": 0
+            })
+
+        max_val = max((item["total"] for item in series), default=0)
+        if max_val > 0:
+            for item in series:
+                item["pct"] = round((item["total"] / max_val) * 100)
+
+        conversion_rate = round((total_conversions / total_comments * 100), 1) if total_comments > 0 else 0.0
+
+        return {
+            "workspace_id": str(workspace_id),
+            "days": days,
+            "start_date": start_date.strftime("%Y-%m-%d"),
+            "end_date": now.strftime("%Y-%m-%d"),
+            "summary": {
+                "total_comments": total_comments,
+                "total_dms": total_dms,
+                "total_conversions": total_conversions,
+                "conversion_rate_pct": conversion_rate,
+            },
+            "series": series
+        }
+

@@ -28,13 +28,39 @@ class InstagramWebhookParser:
                     continue
 
                 provider_id = msg.get("message", {}).get("mid") or f"msg_{msg.get('timestamp')}_{msg.get('sender', {}).get('id')}"
+                
+                # Detect Story Replies and Story Mentions
+                message_obj = msg.get("message", {})
+                story_reply = message_obj.get("reply_to", {}).get("story")
+                story_share = message_obj.get("story_share")
+                attachments = message_obj.get("attachments", []) or []
+                story_mention_att = next((att for att in attachments if att.get("type") == "story_mention"), None)
+
+                event_type = "MESSAGING"
+                story_id = None
+                story_url = None
+
+                if story_reply or story_share:
+                    event_type = "STORY_REPLY"
+                    if isinstance(story_reply, dict):
+                        story_id = story_reply.get("id")
+                        story_url = story_reply.get("url")
+                    elif isinstance(story_share, dict):
+                        story_id = story_share.get("id")
+                        story_url = story_share.get("link")
+                elif story_mention_att:
+                    event_type = "STORY_MENTION"
+                    story_url = story_mention_att.get("payload", {}).get("url")
+
                 events.append({
                     "provider_event_id": provider_id,
-                    "event_type": "MESSAGING",
+                    "event_type": event_type,
                     "business_ig_id": business_id or msg.get("recipient", {}).get("id"),
                     "sender_id": msg.get("sender", {}).get("id"),
                     "recipient_id": msg.get("recipient", {}).get("id"),
-                    "text": msg.get("message", {}).get("text", ""),
+                    "text": message_obj.get("text", ""),
+                    "story_id": story_id,
+                    "story_url": story_url,
                     "timestamp": msg.get("timestamp"),
                     "raw": msg
                 })

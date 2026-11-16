@@ -1,6 +1,6 @@
 # server/app/api/analytics.py
 from typing import Dict, Any
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
 from app.api.deps import get_current_workspace
@@ -15,3 +15,11 @@ async def get_analytics_summary(
     db: AsyncSession = Depends(get_db)
 ):
     return await AnalyticsService.get_dashboard_summary(db, workspace.id)
+
+@router.get("/timeseries", response_model=Dict[str, Any])
+async def get_analytics_timeseries(
+    days: int = Query(30, ge=1, le=365),
+    workspace: Workspace = Depends(get_current_workspace),
+    db: AsyncSession = Depends(get_db)
+):
+    return await AnalyticsService.get_timeseries(db, workspace.id, days=days)

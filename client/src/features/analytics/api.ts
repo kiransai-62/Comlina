@@ -10,6 +10,31 @@ export interface DailyStatItem {
   pct: number;
 }
 
+export interface AnalyticsTimeseriesItem {
+  date: string;
+  day: string;
+  short_date: string;
+  comments: number;
+  dms: number;
+  conversions: number;
+  total: number;
+  pct: number;
+}
+
+export interface AnalyticsTimeseriesResponse {
+  workspace_id: string;
+  days: number;
+  start_date: string;
+  end_date: string;
+  summary: {
+    total_comments: number;
+    total_dms: number;
+    total_conversions: number;
+    conversion_rate_pct: number;
+  };
+  series: AnalyticsTimeseriesItem[];
+}
+
 export interface AnalyticsSummary {
   workspace_id: string;
   total_automations: number;
@@ -27,5 +52,6 @@ export interface AnalyticsSummary {
 
 export const analyticsApi = {
   getSummary: () => api.get<AnalyticsSummary>('/analytics/summary'),
+  getTimeseries: (days = 30) => api.get<AnalyticsTimeseriesResponse>(`/analytics/timeseries?days=${days}`),
 };
 

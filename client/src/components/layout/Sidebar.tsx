@@ -14,7 +14,8 @@ import {
   Settings,
   X,
   Sparkles,
-  ArrowRight
+  ArrowRight,
+  AlertCircle
 } from 'lucide-react';
 import { BrandLogo } from '@/components/BrandLogo';
 import { useWorkspaceStore } from '@/stores/workspaceStore';
@@ -185,7 +186,11 @@ function PlanSummary({ isMobile = false, onCloseMobile }: { isMobile?: boolean; 
           {/* Smooth Rounded Progress Bar */}
           <div className="w-full bg-[#E5ECE7] h-1.5 rounded-full mt-1.5 overflow-hidden">
             <div 
-              className="bg-gradient-to-r from-[#15803D] to-[#22C55E] h-full rounded-full transition-all duration-300"
+              className={`h-full rounded-full transition-all duration-300 ${
+                usage?.is_post_quota_reached
+                  ? 'bg-gradient-to-r from-red-500 to-amber-500'
+                  : 'bg-gradient-to-r from-[#15803D] to-[#22C55E]'
+              }`}
               style={{
                 width: `${
                   usage && usage.posts_limit > 0 
@@ -195,6 +200,14 @@ function PlanSummary({ isMobile = false, onCloseMobile }: { isMobile?: boolean; 
               }}
             />
           </div>
+
+          {/* Quota reached alert notice */}
+          {usage?.is_post_quota_reached && (
+            <div className="mt-2 px-2 py-1 bg-red-50 border border-red-200 rounded-lg text-[10.5px] font-semibold text-red-800 flex items-center gap-1.5 shadow-2xs">
+              <AlertCircle size={12} className="text-red-600 shrink-0" />
+              <span>Post quota reached — upgrade</span>
+            </div>
+          )}
 
           <div className="flex items-center justify-between text-[10.5px] text-[#70706B] mt-1.5">
             <span>{usage ? `${usage.max_dms_per_post} DMs/post` : '99 DMs/post'}</span>

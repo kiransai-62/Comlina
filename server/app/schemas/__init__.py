@@ -19,6 +19,7 @@ class WorkspaceOut(WorkspaceBase):
     plan_status: str
     max_automations: int
     max_accounts: int
+    settings: Optional[Dict[str, Any]] = None
     created_at: datetime
 
 # --- Instagram Account Schemas ---

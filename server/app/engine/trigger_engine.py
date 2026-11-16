@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 
 PUNCTUATION_RE = re.compile(r"[^\w\s]", flags=re.UNICODE)
 COMMENT_TRIGGER_TYPES = {"COMMENT", "COMMENT_TO_DM", "COMMENT_REPLY", "COMMENT_TO_LEAD", "COMMENT_KEYWORD", "COMMENT_ANY", "SPECIFIC_WORDS", "ANY_WORD"}
-MESSAGING_TRIGGER_TYPES = {"MESSAGING", "DM", "DM_REPLY", "DM_TO_LEAD", "STORY_REPLY", "STORY_MENTION"}
+MESSAGING_TRIGGER_TYPES = {"MESSAGING", "DM", "DM_REPLY", "DM_TO_LEAD", "STORY_REPLY", "STORY_MENTION", "STORY", "STORY_REPLIES", "STORY_MENTIONS"}
 
 
 def normalize_text(text: str, strip_punctuation: bool = False) -> str:
@@ -185,13 +185,18 @@ class TriggerEngine:
         event_type = str(event_data.get("event_type", "COMMENT")).upper()
 
         is_comment_event = event_type in ("COMMENT", "FEED", "COMMENTS")
-        is_messaging_event = event_type in ("MESSAGING", "MESSAGES", "DM")
+        is_messaging_event = event_type in ("MESSAGING", "MESSAGES", "DM", "STORY_REPLY", "STORY_MENTION")
 
         if is_comment_event:
             if trigger_type and trigger_type not in COMMENT_TRIGGER_TYPES and trigger_type != event_type:
                 return False
         elif is_messaging_event:
             if trigger_type and trigger_type not in MESSAGING_TRIGGER_TYPES and trigger_type != event_type:
+                return False
+            # Specific story trigger isolation
+            if trigger_type in ("STORY_REPLY", "STORY_REPLIES", "STORY") and event_type != "STORY_REPLY":
+                return False
+            if trigger_type in ("STORY_MENTION", "STORY_MENTIONS") and event_type != "STORY_MENTION":
                 return False
         else:
             if trigger_type != event_type:
@@ -222,6 +227,14 @@ class TriggerEngine:
             return True
 
         if trigger_config.get("replyToAll") is True:
+            return True
+
+        # Story Mentions fire automatically when tagged if no specific keywords are demanded
+        if trigger_type in ("STORY_MENTION", "STORY_MENTIONS") and not trigger_config.get("keywords"):
+            return True
+
+        # Story Replies with any reply enabled fire on any reply
+        if trigger_type in ("STORY_REPLY", "STORY_REPLIES") and (trigger_config.get("replyToAll") or not trigger_config.get("keywords")):
             return True
 
         keywords = trigger_config.get("keywords") or []

@@ -45,6 +45,7 @@ class Workspace(Base):
     plan_status: Mapped[str] = mapped_column(String(32), default="ACTIVE")
     max_automations: Mapped[int] = mapped_column(Integer, default=10)
     max_accounts: Mapped[int] = mapped_column(Integer, default=1)
+    settings: Mapped[Optional[Any]] = mapped_column(JSONType, default=dict, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
 

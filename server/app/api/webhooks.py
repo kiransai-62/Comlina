@@ -131,7 +131,7 @@ async def execute_webhook_event_inprocess(event_id: str, event_data: dict) -> di
     if event_type == "COMMENT":
         from app.jobs.process_comment import process_comment_job
         return await process_comment_job({}, event_id, event_data)
-    elif event_type in ("MESSAGING", "DM"):
+    elif event_type in ("MESSAGING", "DM", "STORY_REPLY", "STORY_MENTION"):
         from app.jobs.send_dm import send_dm_job
         return await send_dm_job({}, event_id, event_data)
 

@@ -127,6 +127,16 @@ export default function SettingsPage() {
           if (ws?.name) {
             setWorkspaceName(ws.name);
           }
+          if (ws?.settings) {
+            if (typeof ws.settings.follow_check === 'boolean') setFollowCheck(ws.settings.follow_check);
+            if (typeof ws.settings.public_reply === 'boolean') setPublicReply(ws.settings.public_reply);
+            if (typeof ws.settings.stop_duplicate === 'boolean') setStopDuplicate(ws.settings.stop_duplicate);
+            if (typeof ws.settings.notification_lead === 'boolean') setNotifyLead(ws.settings.notification_lead);
+            if (typeof ws.settings.notification_token === 'boolean') setNotifyToken(ws.settings.notification_token);
+            if (typeof ws.settings.notification_digest === 'boolean') setNotifyDigest(ws.settings.notification_digest);
+            if (typeof ws.settings.notification_rate === 'boolean') setNotifyRate(ws.settings.notification_rate);
+            if (ws.settings.language) setLanguage(ws.settings.language);
+          }
         } catch {
           if (currentWorkspace?.name) {
             setWorkspaceName(currentWorkspace.name);
@@ -215,7 +225,7 @@ export default function SettingsPage() {
   };
 
   // Toggle automation preferences and persist immediately
-  const handleTogglePreference = (key: 'followCheck' | 'publicReply' | 'stopDuplicate') => {
+  const handleTogglePreference = async (key: 'followCheck' | 'publicReply' | 'stopDuplicate') => {
     const wsId = currentWorkspace?.id || 'default';
     let newFollowCheck = followCheck;
     let newPublicReply = publicReply;
@@ -235,6 +245,16 @@ export default function SettingsPage() {
       triggerToast(`Stop on duplicate ${newStopDuplicate ? 'enabled' : 'disabled'}`);
     }
 
+    try {
+      await api.patch('/workspaces/current/settings', {
+        follow_check: newFollowCheck,
+        public_reply: newPublicReply,
+        stop_duplicate: newStopDuplicate,
+      });
+    } catch {
+      // Local fallback
+    }
+
     if (typeof window !== 'undefined') {
       localStorage.setItem(
         `comlina_automation_preferences_${wsId}`,
@@ -244,6 +264,64 @@ export default function SettingsPage() {
           stopDuplicate: newStopDuplicate,
         })
       );
+    }
+  };
+
+  // Toggle notification alerts and persist immediately to backend
+  const handleToggleNotification = async (key: 'lead' | 'token' | 'digest' | 'rate') => {
+    let newLead = notifyLead;
+    let newToken = notifyToken;
+    let newDigest = notifyDigest;
+    let newRate = notifyRate;
+
+    if (key === 'lead') {
+      newLead = !notifyLead;
+      setNotifyLead(newLead);
+      triggerToast(`Lead alerts ${newLead ? 'enabled' : 'disabled'}`);
+    } else if (key === 'token') {
+      newToken = !notifyToken;
+      setNotifyToken(newToken);
+      triggerToast(`Token expiry alerts ${newToken ? 'enabled' : 'disabled'}`);
+    } else if (key === 'digest') {
+      newDigest = !notifyDigest;
+      setNotifyDigest(newDigest);
+      triggerToast(`Daily performance digest ${newDigest ? 'enabled' : 'disabled'}`);
+    } else if (key === 'rate') {
+      newRate = !notifyRate;
+      setNotifyRate(newRate);
+      triggerToast(`Rate limit safeguards ${newRate ? 'enabled' : 'disabled'}`);
+    }
+
+    try {
+      await api.patch('/workspaces/current/settings', {
+        notification_lead: newLead,
+        notification_token: newToken,
+        notification_digest: newDigest,
+        notification_rate: newRate,
+      });
+    } catch (err: any) {
+      triggerToast(err.message || 'Failed to update notification settings');
+    }
+  };
+
+  const [isDeletingWorkspace, setIsDeletingWorkspace] = useState(false);
+
+  const handleDeleteWorkspace = async () => {
+    if (deleteConfirmText.trim() !== 'DELETE') {
+      triggerToast('Please type DELETE to confirm workspace deletion');
+      return;
+    }
+    setIsDeletingWorkspace(true);
+    try {
+      await api.delete('/workspaces/current');
+      triggerToast('Workspace and associated data deleted successfully');
+      setIsDeleteModalOpen(false);
+      await authService.signOut();
+      window.location.href = '/login';
+    } catch (err: any) {
+      triggerToast(err.message || 'Failed to delete workspace');
+    } finally {
+      setIsDeletingWorkspace(false);
     }
   };
 
@@ -798,16 +876,14 @@ export default function SettingsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-[#111110]">High-Intent Lead Alerts</span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
                 </div>
                 <div className="text-xs text-[#70706B] mt-0.5">Get notified immediately when a commenter requests pricing or drops a phone number.</div>
               </div>
               <input
                 type="checkbox"
-                disabled
                 checked={notifyLead}
-                onChange={() => {}}
-                className="w-4 h-4 accent-[#064125] rounded opacity-50 cursor-not-allowed"
+                onChange={() => handleToggleNotification('lead')}
+                className="w-4 h-4 accent-[#064125] rounded cursor-pointer"
               />
             </div>
 
@@ -815,16 +891,14 @@ export default function SettingsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-[#111110]">Meta Token Expiry Alerts</span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
                 </div>
                 <div className="text-xs text-[#70706B] mt-0.5">Receive reminders 7 days and 24 hours before your Meta Graph API token expires.</div>
               </div>
               <input
                 type="checkbox"
-                disabled
                 checked={notifyToken}
-                onChange={() => {}}
-                className="w-4 h-4 accent-[#064125] rounded opacity-50 cursor-not-allowed"
+                onChange={() => handleToggleNotification('token')}
+                className="w-4 h-4 accent-[#064125] rounded cursor-pointer"
               />
             </div>
 
@@ -832,16 +906,14 @@ export default function SettingsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-[#111110]">Daily Performance Digest</span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
                 </div>
                 <div className="text-xs text-[#70706B] mt-0.5">Summary of DMs dispatched and comments converted each morning.</div>
               </div>
               <input
                 type="checkbox"
-                disabled
                 checked={notifyDigest}
-                onChange={() => {}}
-                className="w-4 h-4 accent-[#064125] rounded opacity-50 cursor-not-allowed"
+                onChange={() => handleToggleNotification('digest')}
+                className="w-4 h-4 accent-[#064125] rounded cursor-pointer"
               />
             </div>
 
@@ -849,16 +921,14 @@ export default function SettingsPage() {
               <div>
                 <div className="flex items-center gap-2">
                   <span className="text-xs font-bold text-[#111110]">Rate Limit Safeguard</span>
-                  <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#F4F4F1] text-[#70706B]">Coming soon</span>
                 </div>
                 <div className="text-xs text-[#70706B] mt-0.5">Alert if comment volume nears Instagram hourly API safety thresholds.</div>
               </div>
               <input
                 type="checkbox"
-                disabled
                 checked={notifyRate}
-                onChange={() => {}}
-                className="w-4 h-4 accent-[#064125] rounded opacity-50 cursor-not-allowed"
+                onChange={() => handleToggleNotification('rate')}
+                className="w-4 h-4 accent-[#064125] rounded cursor-pointer"
               />
             </div>
           </div>
@@ -1060,7 +1130,6 @@ export default function SettingsPage() {
         <div className="bg-white border-2 border-[#FEE2E2] rounded-xl p-6 shadow-2xs space-y-4 max-w-4xl">
           <div className="flex items-center gap-2">
             <span className="text-sm font-bold text-[#DC2626]">Danger Zone</span>
-            <span className="px-1.5 py-0.5 rounded text-[10px] font-semibold bg-[#FEE2E2] text-[#DC2626]">Coming soon</span>
           </div>
           <p className="text-xs text-[#70706B] leading-relaxed">
             Deleting your workspace will permanently purge all automations, contact history, and disconnect your Instagram accounts. This action is irreversible.
@@ -1068,11 +1137,11 @@ export default function SettingsPage() {
           <div className="pt-2">
             <button
               type="button"
-              disabled
-              className="px-4 py-2 bg-[#DC2626] opacity-50 cursor-not-allowed text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-2"
+              onClick={() => setIsDeleteModalOpen(true)}
+              className="px-4 py-2 bg-[#DC2626] hover:bg-[#B91C1C] cursor-pointer text-white text-xs font-bold rounded-lg shadow-xs flex items-center gap-2 transition-colors"
             >
               <Trash2 size={14} />
-              <span>Delete Workspace & Account (Coming soon)</span>
+              <span>Delete Workspace &amp; Account</span>
             </button>
           </div>
         </div>
@@ -1164,16 +1233,17 @@ export default function SettingsPage() {
               <button
                 type="button"
                 onClick={() => { setIsDeleteModalOpen(false); setDeleteConfirmText(''); }}
-                className="px-3.5 py-1.5 border border-[#ECECE8] text-xs font-medium rounded-lg hover:bg-gray-50"
+                className="px-3.5 py-1.5 border border-[#ECECE8] text-xs font-medium rounded-lg hover:bg-gray-50 cursor-pointer"
               >
                 Cancel
               </button>
               <button
                 type="button"
-                disabled
-                className="px-3.5 py-1.5 bg-[#DC2626] opacity-50 cursor-not-allowed text-white text-xs font-bold rounded-lg"
+                disabled={deleteConfirmText.trim() !== 'DELETE' || isDeletingWorkspace}
+                onClick={handleDeleteWorkspace}
+                className="px-3.5 py-1.5 bg-[#DC2626] hover:bg-[#B91C1C] disabled:opacity-40 disabled:cursor-not-allowed text-white text-xs font-bold rounded-lg cursor-pointer transition-colors"
               >
-                Delete Permanently (Coming soon)
+                {isDeletingWorkspace ? 'Deleting...' : 'Delete Permanently'}
               </button>
             </div>
           </div>
