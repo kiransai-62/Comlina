@@ -74,24 +74,45 @@ class InstagramAccount(Base):
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
     user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
-    ig_user_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    ig_user_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    ig_business_account_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True, index=True)
     username: Mapped[str] = mapped_column(String(128), nullable=False, index=True)
     account_type: Mapped[str] = mapped_column(String(32), default="BUSINESS")
     profile_pic_url: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     follower_count: Mapped[int] = mapped_column(Integer, default=0)
     access_token_encrypted: Mapped[str] = mapped_column(Text, nullable=False)
+    token_type: Mapped[str] = mapped_column(String(32), default="long_lived")
     token_expires_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    is_connected: Mapped[bool] = mapped_column(Boolean, default=True)
     auth_method: Mapped[str] = mapped_column(String(64), default="META_INSTAGRAM_OAUTH")
     connection_status: Mapped[str] = mapped_column(String(32), default="CONNECTED", index=True)
+    scopes: Mapped[Any] = mapped_column(JSONType, default=list)
     last_validated_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_refreshed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     last_error_code: Mapped[Optional[str]] = mapped_column(String(64), nullable=True)
+    last_error: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     permissions: Mapped[Any] = mapped_column(JSONType, default=["instagram_manage_messages", "instagram_manage_comments"])
     webhook_subscription_status: Mapped[Optional[str]] = mapped_column(String(32), default="UNKNOWN", nullable=True)
     webhook_subscribed_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
     connected_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, onupdate=utc_now)
+
+    @property
+    def profile_picture_url(self) -> Optional[str]:
+        return self.profile_pic_url
+
+    @profile_picture_url.setter
+    def profile_picture_url(self, value: Optional[str]):
+        self.profile_pic_url = value
+
+    @property
+    def followers_count(self) -> int:
+        return self.follower_count
+
+    @followers_count.setter
+    def followers_count(self, value: int):
+        self.follower_count = value
 
     __table_args__ = (UniqueConstraint("ig_user_id", name="uq_ig_accounts_ig_user_id"),)
 
@@ -105,14 +126,23 @@ class Automation(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
     workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    user_id: Mapped[Optional[uuid.UUID]] = mapped_column(Uuid, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
     instagram_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("instagram_accounts.id", ondelete="CASCADE"), index=True)
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     description: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
-    status: Mapped[str] = mapped_column(String(32), default="DRAFT", index=True)
-    trigger_type: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    flow_definition: Mapped[Any] = mapped_column(JSONType, nullable=False, default={})
+    media_id: Mapped[str] = mapped_column(String(100), nullable=False, default="ALL", index=True)
+    trigger_type: Mapped[str] = mapped_column(String(64), nullable=False, default="SPECIFIC_WORDS", index=True)
+    match_mode: Mapped[str] = mapped_column(String(32), nullable=False, default="CONTAINS")
+    keywords: Mapped[Any] = mapped_column(JSONType, nullable=False, default=list)
+    follow_condition: Mapped[Any] = mapped_column(JSONType, nullable=False, default=lambda: {"enabled": False})
+    response_config: Mapped[Any] = mapped_column(JSONType, nullable=False, default=dict)
+    status: Mapped[str] = mapped_column(String(32), default="ACTIVE", index=True)
+    is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True, index=True)
+    flow_definition: Mapped[Any] = mapped_column(JSONType, nullable=False, default=dict)
     version: Mapped[int] = mapped_column(Integer, default=1)
+    stats_triggered: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     stats_comments: Mapped[int] = mapped_column(Integer, default=0)
+    stats_comments_replied: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     stats_dms_sent: Mapped[int] = mapped_column(Integer, default=0)
     stats_clicks: Mapped[int] = mapped_column(Integer, default=0)
     published_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -284,5 +314,26 @@ class AutomationRun(Base):
     meta_error_subcode: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
     error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now, index=True)
+
+
+class AutomationExecution(Base):
+    __tablename__ = "automation_executions"
+    __table_args__ = (
+        UniqueConstraint("automation_id", "comment_id", name="uq_automation_comment_execution"),
+    )
+
+    id: Mapped[uuid.UUID] = mapped_column(Uuid, primary_key=True, default=uuid.uuid4)
+    workspace_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("workspaces.id", ondelete="CASCADE"), index=True)
+    automation_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("automations.id", ondelete="CASCADE"), index=True)
+    instagram_account_id: Mapped[uuid.UUID] = mapped_column(Uuid, ForeignKey("instagram_accounts.id", ondelete="CASCADE"), index=True)
+    comment_id: Mapped[str] = mapped_column(String(100), nullable=False, index=True)
+    media_id: Mapped[Optional[str]] = mapped_column(String(100), nullable=True)
+    commenter_ig_id: Mapped[str] = mapped_column(String(100), nullable=False)
+    trigger_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    matched_keyword: Mapped[Optional[str]] = mapped_column(String(255), nullable=True)
+    follower_status: Mapped[str] = mapped_column(String(32), nullable=False, default="UNKNOWN")
+    execution_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    error_message: Mapped[Optional[str]] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utc_now)
 
 

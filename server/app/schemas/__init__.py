@@ -29,12 +29,16 @@ class InstagramAccountOut(BaseModel):
     workspace_id: uuid.UUID
     user_id: Optional[uuid.UUID] = None
     ig_user_id: str
+    ig_business_account_id: Optional[str] = None
     username: str
     account_type: str
     follower_count: int
     profile_pic_url: Optional[str] = None
     token_expires_at: Optional[datetime] = None
     is_active: bool
+    is_connected: Optional[bool] = True
+    needs_reconnect: Optional[bool] = False
+    last_error: Optional[str] = None
     auth_method: Optional[str] = "META_INSTAGRAM_OAUTH"
     connection_status: Optional[str] = "CONNECTED"
     last_validated_at: Optional[datetime] = None

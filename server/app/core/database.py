@@ -142,10 +142,47 @@ async def _apply_schema_patches(conn) -> None:
                 ADD COLUMN IF NOT EXISTS last_refreshed_at TIMESTAMPTZ,
                 ADD COLUMN IF NOT EXISTS last_error_code VARCHAR(64),
                 ADD COLUMN IF NOT EXISTS webhook_subscription_status VARCHAR(32) DEFAULT 'UNKNOWN',
-                ADD COLUMN IF NOT EXISTS webhook_subscribed_at TIMESTAMPTZ;
+                ADD COLUMN IF NOT EXISTS webhook_subscribed_at TIMESTAMPTZ,
+                ADD COLUMN IF NOT EXISTS ig_business_account_id VARCHAR(100),
+                ADD COLUMN IF NOT EXISTS token_type VARCHAR(32) NOT NULL DEFAULT 'long_lived',
+                ADD COLUMN IF NOT EXISTS is_connected BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS scopes JSONB NOT NULL DEFAULT '[]'::jsonb,
+                ADD COLUMN IF NOT EXISTS last_error TEXT;
             """))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_user_id ON instagram_accounts(user_id);"))
             await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_status ON instagram_accounts(connection_status);"))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_ig_accounts_business_id ON instagram_accounts(ig_business_account_id);"))
+            await conn.execute(text("""
+                ALTER TABLE automations
+                ADD COLUMN IF NOT EXISTS user_id UUID REFERENCES users(id) ON DELETE SET NULL,
+                ADD COLUMN IF NOT EXISTS media_id VARCHAR(100) NOT NULL DEFAULT 'ALL',
+                ADD COLUMN IF NOT EXISTS match_mode VARCHAR(32) NOT NULL DEFAULT 'CONTAINS',
+                ADD COLUMN IF NOT EXISTS keywords JSONB NOT NULL DEFAULT '[]'::jsonb,
+                ADD COLUMN IF NOT EXISTS follow_condition JSONB NOT NULL DEFAULT '{"enabled": false}'::jsonb,
+                ADD COLUMN IF NOT EXISTS response_config JSONB NOT NULL DEFAULT '{}'::jsonb,
+                ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE,
+                ADD COLUMN IF NOT EXISTS stats_triggered INTEGER NOT NULL DEFAULT 0,
+                ADD COLUMN IF NOT EXISTS stats_comments_replied INTEGER NOT NULL DEFAULT 0;
+            """))
+            await conn.execute(text("CREATE INDEX IF NOT EXISTS idx_automations_execution_lookup ON automations(instagram_account_id, is_active, status, media_id);"))
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS automation_executions (
+                    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+                    workspace_id UUID NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+                    automation_id UUID NOT NULL REFERENCES automations(id) ON DELETE CASCADE,
+                    instagram_account_id UUID NOT NULL REFERENCES instagram_accounts(id) ON DELETE CASCADE,
+                    comment_id VARCHAR(100) NOT NULL,
+                    media_id VARCHAR(100),
+                    commenter_ig_id VARCHAR(100) NOT NULL,
+                    trigger_type VARCHAR(32) NOT NULL,
+                    matched_keyword VARCHAR(255),
+                    follower_status VARCHAR(32) NOT NULL DEFAULT 'UNKNOWN',
+                    execution_status VARCHAR(32) NOT NULL,
+                    error_message TEXT,
+                    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    UNIQUE(automation_id, comment_id)
+                );
+            """))
             await conn.execute(text("""
                 ALTER TABLE contacts
                 ADD COLUMN IF NOT EXISTS automation_state VARCHAR(64);
@@ -174,6 +211,56 @@ async def _apply_schema_patches(conn) -> None:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscription_status TEXT DEFAULT 'UNKNOWN'"))
             if "webhook_subscribed_at" not in existing_cols:
                 await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN webhook_subscribed_at TIMESTAMP"))
+            if "ig_business_account_id" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN ig_business_account_id TEXT"))
+            if "token_type" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN token_type TEXT DEFAULT 'long_lived'"))
+            if "is_connected" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN is_connected BOOLEAN DEFAULT 1"))
+            if "scopes" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN scopes TEXT DEFAULT '[]'"))
+            if "last_error" not in existing_cols:
+                await conn.execute(text("ALTER TABLE instagram_accounts ADD COLUMN last_error TEXT"))
+
+            res_a = await conn.execute(text("PRAGMA table_info(automations)"))
+            auto_cols = {row[1] for row in res_a.fetchall()}
+            if "user_id" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN user_id TEXT"))
+            if "media_id" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN media_id TEXT DEFAULT 'ALL'"))
+            if "match_mode" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN match_mode TEXT DEFAULT 'CONTAINS'"))
+            if "keywords" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN keywords TEXT DEFAULT '[]'"))
+            if "follow_condition" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN follow_condition TEXT DEFAULT '{\"enabled\": false}'"))
+            if "response_config" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN response_config TEXT DEFAULT '{}'"))
+            if "is_active" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN is_active BOOLEAN DEFAULT 1"))
+            if "stats_triggered" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN stats_triggered INTEGER DEFAULT 0"))
+            if "stats_comments_replied" not in auto_cols:
+                await conn.execute(text("ALTER TABLE automations ADD COLUMN stats_comments_replied INTEGER DEFAULT 0"))
+
+            await conn.execute(text("""
+                CREATE TABLE IF NOT EXISTS automation_executions (
+                    id TEXT PRIMARY KEY,
+                    workspace_id TEXT NOT NULL,
+                    automation_id TEXT NOT NULL,
+                    instagram_account_id TEXT NOT NULL,
+                    comment_id TEXT NOT NULL,
+                    media_id TEXT,
+                    commenter_ig_id TEXT NOT NULL,
+                    trigger_type TEXT NOT NULL,
+                    matched_keyword TEXT,
+                    follower_status TEXT DEFAULT 'UNKNOWN',
+                    execution_status TEXT NOT NULL,
+                    error_message TEXT,
+                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE(automation_id, comment_id)
+                );
+            """))
 
             res_c = await conn.execute(text("PRAGMA table_info(contacts)"))
             contact_cols = {row[1] for row in res_c.fetchall()}

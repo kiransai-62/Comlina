@@ -10,7 +10,7 @@ from typing import Optional
 from fastapi import APIRouter, Request, Response, HTTPException, status, Query, Depends, Form
 from app.core.replay_cache import replay_cache
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select, delete
+from sqlalchemy import select, delete, or_
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 
@@ -199,7 +199,10 @@ async def simulate_comment(
 
     if not account and req.business_ig_id:
         stmt_acc = select(InstagramAccount).where(
-            InstagramAccount.ig_user_id == req.business_ig_id,
+            or_(
+                InstagramAccount.ig_user_id == str(req.business_ig_id),
+                InstagramAccount.ig_business_account_id == str(req.business_ig_id),
+            ),
             InstagramAccount.is_active == True
         )
         account = (await db.execute(stmt_acc)).scalar_one_or_none()
@@ -323,7 +326,10 @@ async def receive_meta_webhook(
         instagram_account_id = None
         if business_ig_id:
             stmt_acc = select(InstagramAccount).where(
-                InstagramAccount.ig_user_id == business_ig_id,
+                or_(
+                    InstagramAccount.ig_user_id == str(business_ig_id),
+                    InstagramAccount.ig_business_account_id == str(business_ig_id),
+                ),
                 InstagramAccount.is_active == True
             )
             res_acc = await db.execute(stmt_acc)

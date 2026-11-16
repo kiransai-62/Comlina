@@ -103,17 +103,27 @@ async function main() {
   const pg = parseHostAndPort(dbUrl, 5432, 'localhost');
   const redis = parseHostAndPort(redisUrl, 6379, 'localhost');
 
+  const envMode = (mergedEnv.ENVIRONMENT || process.env.NODE_ENV || 'development').toLowerCase();
+  const isDev = envMode !== 'production';
+  const isSqlite = dbUrl.toLowerCase().includes('sqlite');
+
   console.log('🔍 [Startup Check] Verifying backend dependencies...');
 
   const [pgOk, redisOk] = await Promise.all([
-    checkPort(pg.host, pg.port),
+    isSqlite ? Promise.resolve(true) : checkPort(pg.host, pg.port),
     checkPort(redis.host, redis.port)
   ]);
 
   let hasError = false;
 
-  if (pgOk) {
+  if (isSqlite) {
+    console.log(`\x1b[32m✔ SQLite database configured (${dbUrl})\x1b[0m`);
+  } else if (pgOk) {
     console.log(`\x1b[32m✔ PostgreSQL is reachable on ${pg.host}:${pg.port}\x1b[0m`);
+  } else if (isDev || mergedEnv.SKIP_DEP_CHECK === 'true' || process.env.SKIP_DEP_CHECK === 'true') {
+    console.warn(
+      `\x1b[33m⚠ Postgres is not reachable on ${pg.host}:${pg.port} — local development will proceed using SQLite fallback (comlina_dev.db)\x1b[0m`
+    );
   } else {
     hasError = true;
     console.error(
@@ -123,6 +133,10 @@ async function main() {
 
   if (redisOk) {
     console.log(`\x1b[32m✔ Redis is reachable on ${redis.host}:${redis.port}\x1b[0m`);
+  } else if (isDev || mergedEnv.SKIP_DEP_CHECK === 'true' || process.env.SKIP_DEP_CHECK === 'true') {
+    console.warn(
+      `\x1b[33m⚠ Redis is not reachable on ${redis.host}:${redis.port} — webhook queueing and background workers will be skipped\x1b[0m`
+    );
   } else {
     hasError = true;
     console.error(
@@ -130,19 +144,20 @@ async function main() {
     );
   }
 
-  const isDev = (mergedEnv.ENVIRONMENT || 'development').toLowerCase() !== 'production';
-  if (hasError && (isDev || mergedEnv.SKIP_DEP_CHECK === 'true' || process.env.SKIP_DEP_CHECK === 'true')) {
+  if (hasError) {
+    console.error('\n\x1b[31mRequired backend dependencies are not running in production mode. Please start PostgreSQL and Redis.\x1b[0m\n');
+    process.exit(1);
+  }
+
+  if (!pgOk || !redisOk) {
     console.warn('\x1b[33m[WARN] External backend dependencies (PostgreSQL/Redis) are offline.\x1b[0m');
-    console.warn('\x1b[33m[WARN] Local development will proceed using the SQLite fallback (server/comlina_dev.db).\x1b[0m');
+    if (!pgOk && !isSqlite) {
+      console.warn('\x1b[33m[WARN] Local development will proceed using the SQLite fallback (server/comlina_dev.db).\x1b[0m');
+    }
     if (!redisOk) {
       console.warn('\x1b[33m[WARN] Redis is unreachable; webhook queueing and background workers will be skipped.\x1b[0m');
     }
     process.exit(0);
-  }
-
-  if (hasError) {
-    console.error('\n\x1b[31mRequired backend dependencies are not running in production mode. Please start PostgreSQL and Redis.\x1b[0m\n');
-    process.exit(1);
   }
 
   console.log('\x1b[32m✔ All required backend dependencies are reachable.\x1b[0m\n');

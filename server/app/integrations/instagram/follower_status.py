@@ -1,14 +1,103 @@
 # server/app/integrations/instagram/follower_status.py
 from enum import Enum
-from typing import Tuple
+import logging
+from typing import Any, Dict, Optional, Tuple
+import httpx
+from app.core.config import settings
+from app.core.logging import log_event
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.exceptions import MetaRateLimitError, MetaGraphAPIError
+
+logger = logging.getLogger(__name__)
 
 class FollowerStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
     FOLLOWING = "FOLLOWING"
     NOT_FOLLOWING = "NOT_FOLLOWING"
     CHECK_UNAVAILABLE = "CHECK_UNAVAILABLE"
+
+
+class FollowerStatusService:
+    @staticmethod
+    async def check_follower_status(
+        commenter_ig_id: str,
+        access_token: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if not commenter_ig_id or not access_token:
+            res = {
+                "status": "CHECK_UNAVAILABLE",
+                "is_following": False,
+                "limitation": "Missing commenter ID or access token.",
+            }
+            log_event(logger, "FOLLOW_CONDITION_RESULT", correlation_id=correlation_id, **res)
+            return res
+
+        version = getattr(settings, "META_GRAPH_API_VERSION", None) or getattr(settings, "META_API_VERSION", "v21.0")
+        url = f"https://graph.instagram.com/{version}/{commenter_ig_id}"
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    url,
+                    params={
+                        "fields": "name,username,is_user_follow_business,is_business_follow_user",
+                        "access_token": access_token,
+                    },
+                )
+                if resp.status_code == 200:
+                    data = resp.json()
+                    if "is_user_follow_business" in data and data["is_user_follow_business"] is not None:
+                        is_following = bool(data["is_user_follow_business"])
+                        res = {
+                            "status": "FOLLOWING" if is_following else "NOT_FOLLOWING",
+                            "is_following": is_following,
+                            "limitation": None,
+                        }
+                        log_event(logger, "FOLLOW_CONDITION_RESULT", correlation_id=correlation_id, **res)
+                        return res
+
+                    res = {
+                        "status": "CHECK_UNAVAILABLE",
+                        "is_following": False,
+                        "limitation": (
+                            "Meta Graph API did not return 'is_user_follow_business' for this comment sender ID. "
+                            "Meta restricts profile relationship fields until a messaging conversation is established "
+                            "or requires Advanced Access for instagram_business_manage_messages."
+                        ),
+                    }
+                    log_event(logger, "FOLLOW_CONDITION_RESULT", correlation_id=correlation_id, **res)
+                    return res
+
+                err_data = resp.json() if resp.content else {}
+                err_msg = err_data.get("error", {}).get("message") or f"HTTP {resp.status_code}"
+                res = {
+                    "status": "CHECK_UNAVAILABLE",
+                    "is_following": False,
+                    "limitation": f"Meta Graph API follower lookup unavailable: {err_msg}",
+                }
+                log_event(
+                    logger,
+                    "FOLLOW_CONDITION_RESULT",
+                    correlation_id=correlation_id,
+                    level=logging.WARNING,
+                    **res,
+                )
+                return res
+        except Exception as exc:
+            res = {
+                "status": "UNKNOWN",
+                "is_following": False,
+                "limitation": f"Follower check network error: {exc}",
+            }
+            log_event(
+                logger,
+                "FOLLOW_CONDITION_RESULT",
+                correlation_id=correlation_id,
+                level=logging.ERROR,
+                **res,
+            )
+            return res
+
 
 class InstagramFollowerService:
     def __init__(self, client: MetaGraphClient):

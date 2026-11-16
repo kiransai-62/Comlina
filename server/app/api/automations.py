@@ -4,7 +4,7 @@ from typing import List
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from app.core.database import get_db
-from app.api.deps import get_current_workspace, get_current_user
+from app.api.deps import get_current_workspace, get_current_user, set_rls_context
 from app.models import Workspace, User
 from app.schemas import AutomationOut, AutomationCreate, AutomationUpdate
 from app.services.automation_service import AutomationService
@@ -16,19 +16,24 @@ async def list_automations(
     limit: int = Query(50, ge=1, le=100),
     offset: int = Query(0, ge=0),
     workspace: Workspace = Depends(get_current_workspace),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     return await AutomationService.list_automations(db, workspace.id, limit=limit, offset=offset)
 
 @router.post("", response_model=AutomationOut, status_code=status.HTTP_201_CREATED)
 async def create_automation(
     data: AutomationCreate,
     workspace: Workspace = Depends(get_current_workspace),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     return await AutomationService.create_automation(
         db=db,
         workspace_id=workspace.id,
+        user_id=user.id,
         data=data,
         max_automations=workspace.max_automations
     )
@@ -37,8 +42,10 @@ async def create_automation(
 async def get_automation(
     automation_id: uuid.UUID,
     workspace: Workspace = Depends(get_current_workspace),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     automation = await AutomationService.get_automation(db, workspace.id, automation_id)
     if not automation:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")
@@ -49,9 +56,17 @@ async def update_automation(
     automation_id: uuid.UUID,
     data: AutomationUpdate,
     workspace: Workspace = Depends(get_current_workspace),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
-    return await AutomationService.update_automation(db, workspace.id, automation_id, data)
+    await set_rls_context(db, user.id, workspace.id)
+    return await AutomationService.update_automation(
+        db=db,
+        workspace_id=workspace.id,
+        automation_id=automation_id,
+        data=data,
+        user_id=user.id,
+    )
 
 @router.post("/{automation_id}/publish", response_model=AutomationOut)
 async def publish_automation(
@@ -60,6 +75,7 @@ async def publish_automation(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     try:
         return await AutomationService.publish_automation(db, workspace.id, automation_id, user.id)
     except ValueError as e:
@@ -69,8 +85,10 @@ async def publish_automation(
 async def delete_automation(
     automation_id: uuid.UUID,
     workspace: Workspace = Depends(get_current_workspace),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     success = await AutomationService.delete_automation(db, workspace.id, automation_id)
     if not success:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Automation not found")

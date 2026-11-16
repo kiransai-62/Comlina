@@ -1,8 +1,11 @@
 # server/app/engine/action_engine.py
 import asyncio
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, List, Optional
+import httpx
 from sqlalchemy import select
+from app.core.config import settings
+from app.core.logging import log_event
 from app.integrations.instagram import InstagramComments, InstagramMessaging
 from app.integrations.instagram.client import MetaGraphClient
 
@@ -182,3 +185,189 @@ class ActionEngine:
             return {"status": "SUCCESS", "action": "DELAY", "seconds": seconds}
 
         return {"status": "SKIPPED", "action": action_type}
+
+    @classmethod
+    async def send_comment_reply(
+        cls,
+        comment_id: str,
+        message_text: str,
+        access_token: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        version = getattr(settings, "META_GRAPH_API_VERSION", None) or getattr(settings, "META_API_VERSION", "v21.0")
+        url = f"https://graph.instagram.com/{version}/{comment_id}/replies"
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                params={"access_token": access_token},
+                json={"message": message_text},
+            )
+            body = resp.json() if resp.content else {}
+            if resp.status_code in (200, 201) and body.get("id"):
+                log_event(
+                    logger,
+                    "ACTION_EXECUTION",
+                    status="SUCCESS",
+                    correlation_id=correlation_id,
+                    action_type="REPLY_COMMENT",
+                    comment_id=comment_id,
+                    reply_id=body.get("id"),
+                )
+                return {"success": True, "reply_id": body["id"]}
+
+            err_msg = body.get("error", {}).get("message") or f"HTTP {resp.status_code}"
+            log_event(
+                logger,
+                "ACTION_EXECUTION",
+                status="FAILED",
+                correlation_id=correlation_id,
+                level=logging.ERROR,
+                action_type="REPLY_COMMENT",
+                comment_id=comment_id,
+                error=err_msg,
+            )
+            return {"success": False, "error": err_msg}
+
+    @classmethod
+    async def send_private_reply_dm(
+        cls,
+        ig_business_id: str,
+        comment_id: Optional[str],
+        commenter_id: Optional[str],
+        message_text: str,
+        buttons: Optional[List[Dict[str, Any]]],
+        access_token: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        version = getattr(settings, "META_GRAPH_API_VERSION", None) or getattr(settings, "META_API_VERSION", "v21.0")
+        url = f"https://graph.instagram.com/{version}/me/messages"
+        recipient = {"comment_id": comment_id} if comment_id else {"id": commenter_id}
+
+        if buttons:
+            url_buttons = []
+            quick_replies = []
+            for btn in buttons[:3]:
+                if btn.get("type") == "postback" or btn.get("payload"):
+                    quick_replies.append({
+                        "content_type": "text",
+                        "title": str(btn.get("title") or "Continue")[:20],
+                        "payload": str(btn.get("payload") or "FOLLOW_VERIFIED"),
+                    })
+                elif btn.get("url"):
+                    url_buttons.append({
+                        "type": "web_url",
+                        "url": btn["url"],
+                        "title": str(btn.get("title") or "Open Link")[:20],
+                    })
+
+            if url_buttons:
+                message_payload: Dict[str, Any] = {
+                    "attachment": {
+                        "type": "template",
+                        "payload": {
+                            "template_type": "button",
+                            "text": message_text,
+                            "buttons": url_buttons,
+                        },
+                    }
+                }
+            elif quick_replies:
+                message_payload = {
+                    "text": message_text,
+                    "quick_replies": quick_replies,
+                }
+            else:
+                message_payload = {"text": message_text}
+        else:
+            message_payload = {"text": message_text}
+
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                url,
+                params={"access_token": access_token},
+                json={
+                    "recipient": recipient,
+                    "message": message_payload,
+                },
+            )
+            body = resp.json() if resp.content else {}
+            if resp.status_code in (200, 201) and body.get("message_id"):
+                log_event(
+                    logger,
+                    "ACTION_EXECUTION",
+                    status="SUCCESS",
+                    correlation_id=correlation_id,
+                    action_type="SEND_DM",
+                    comment_id=comment_id,
+                    message_id=body.get("message_id"),
+                )
+                return {"success": True, "message_id": body["message_id"]}
+
+            err_msg = body.get("error", {}).get("message") or f"HTTP {resp.status_code}"
+            log_event(
+                logger,
+                "ACTION_EXECUTION",
+                status="FAILED",
+                correlation_id=correlation_id,
+                level=logging.ERROR,
+                action_type="SEND_DM",
+                comment_id=comment_id,
+                error=err_msg,
+            )
+            return {"success": False, "error": err_msg}
+
+    @classmethod
+    async def execute_actions(
+        cls,
+        actions: List[Dict[str, Any]],
+        event_context: Dict[str, Any],
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        access_token = event_context.get("access_token")
+        ig_business_id = event_context.get("ig_business_id")
+        comment_id = event_context.get("comment_id")
+        commenter_id = event_context.get("commenter_id")
+
+        dm_sent = False
+        comment_replied = False
+        errors: List[str] = []
+
+        for act in actions:
+            act_type = str(act.get("type") or "").upper()
+            text = str(act.get("text") or act.get("message") or "").strip()
+            if not text:
+                continue
+
+            if act_type in ("REPLY_COMMENT", "COMMENT_REPLY") and comment_id:
+                res = await cls.send_comment_reply(
+                    comment_id=comment_id,
+                    message_text=text,
+                    access_token=access_token,
+                    correlation_id=correlation_id,
+                )
+                if res["success"]:
+                    comment_replied = True
+                else:
+                    errors.append(res["error"])
+
+            elif act_type in ("SEND_DM", "PRIVATE_REPLY", "DM"):
+                res = await cls.send_private_reply_dm(
+                    ig_business_id=ig_business_id,
+                    comment_id=comment_id,
+                    commenter_id=commenter_id,
+                    message_text=text,
+                    buttons=act.get("buttons"),
+                    access_token=access_token,
+                    correlation_id=correlation_id,
+                )
+                if res["success"]:
+                    dm_sent = True
+                else:
+                    errors.append(res["error"])
+
+        return {
+            "success": (dm_sent or comment_replied) and len(errors) == 0,
+            "dm_sent": dm_sent,
+            "comment_replied": comment_replied,
+            "errors": errors,
+        }

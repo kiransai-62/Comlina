@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, func, update
 from app.core.database import get_db
 from app.core.config import settings
-from app.api.deps import get_current_workspace, require_workspace_owner, get_current_user
+from app.api.deps import get_current_workspace, require_workspace_owner, get_current_user, set_rls_context
 from app.models import (
     Workspace,
     InstagramAccount,
@@ -37,7 +37,7 @@ from app.schemas import (
     InstagramAccountSummary,
     WebhookSubscriptionStatusOut,
 )
-from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError
+from app.integrations.instagram.oauth import MetaOAuth, MetaOAuthError, InstagramOAuthService
 from app.integrations.instagram.client import MetaGraphClient
 from app.integrations.instagram.exceptions import MetaGraphAPIError, MetaTokenExpiredError, MetaRateLimitError
 from app.core.encryption import encrypt_token, decrypt_token
@@ -45,6 +45,39 @@ from app.core.replay_cache import replay_cache
 
 logger = logging.getLogger("instagram_api")
 router = APIRouter(prefix="/instagram", tags=["Instagram"])
+
+def _serialize_account(acc: InstagramAccount) -> Dict[str, Any]:
+    now = datetime.now(timezone.utc)
+    expires_at = acc.token_expires_at
+    if expires_at and expires_at.tzinfo is None:
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+    conn_status = getattr(acc, "connection_status", "CONNECTED") or "CONNECTED"
+    if expires_at and expires_at <= now and conn_status == "CONNECTED":
+        conn_status = "EXPIRED"
+
+    is_connected = conn_status == "CONNECTED" and getattr(acc, "is_connected", True)
+
+    return {
+        "id": str(acc.id),
+        "workspace_id": str(acc.workspace_id),
+        "user_id": str(acc.user_id) if getattr(acc, "user_id", None) else None,
+        "ig_user_id": acc.ig_user_id,
+        "ig_business_account_id": getattr(acc, "ig_business_account_id", None) or acc.ig_user_id,
+        "username": acc.username,
+        "account_type": acc.account_type or "BUSINESS",
+        "profile_picture_url": getattr(acc, "profile_picture_url", None) or getattr(acc, "profile_pic_url", None),
+        "followers_count": getattr(acc, "followers_count", None) or getattr(acc, "follower_count", 0) or 0,
+        "token_expires_at": expires_at.isoformat() if expires_at else None,
+        "connection_status": conn_status,
+        "status": conn_status,
+        "is_connected": is_connected,
+        "needs_reconnect": conn_status in ("RECONNECT_REQUIRED", "EXPIRED", "REVOKED", "REAUTHORIZATION_REQUIRED"),
+        "last_error": getattr(acc, "last_error", None),
+        "created_at": acc.created_at.isoformat() if getattr(acc, "created_at", None) else None,
+        "updated_at": acc.updated_at.isoformat() if getattr(acc, "updated_at", None) else None,
+    }
+
 
 def _determine_account_status(account: InstagramAccount) -> str:
     now = datetime.now(timezone.utc)
@@ -198,10 +231,12 @@ def _get_owner_filter(workspace: Workspace, user: Any):
 
 @router.get("/accounts", response_model=List[InstagramAccountOut])
 async def list_instagram_accounts(
+    validate_live: bool = Query(False, description="Force live Meta Graph API token check"),
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_current_workspace),
     db: AsyncSession = Depends(get_db)
 ):
+    await set_rls_context(db, user.id, workspace.id)
     stmt = (
         select(InstagramAccount)
         .where(_get_owner_filter(workspace, user))
@@ -210,28 +245,86 @@ async def list_instagram_accounts(
     res = await db.execute(stmt)
     raw_accounts = list(res.scalars().all())
 
+    now = datetime.now(timezone.utc)
     out = []
+    dirty = False
+
     for acc in raw_accounts:
+        plain_token = None
+        try:
+            plain_token = decrypt_token(acc.access_token_encrypted)
+        except Exception as err:
+            acc.connection_status = "RECONNECT_REQUIRED"
+            acc.last_error = str(err)
+            dirty = True
+
+        expires_at = acc.token_expires_at
+        if expires_at and expires_at.tzinfo is None:
+            expires_at = expires_at.replace(tzinfo=timezone.utc)
+
+        is_expired = bool(expires_at and expires_at <= now)
+        should_refresh = bool(
+            plain_token
+            and expires_at
+            and not is_expired
+            and (expires_at - now) < timedelta(days=7)
+            and not plain_token.startswith("mock_")
+        )
+
+        if is_expired:
+            acc.connection_status = "EXPIRED"
+            acc.last_error = "Instagram access token has expired. Please reconnect your account."
+            dirty = True
+        elif should_refresh:
+            try:
+                refreshed = await InstagramOAuthService.refresh_long_lived_token(access_token=plain_token)
+                acc.access_token_encrypted = encrypt_token(refreshed["access_token"])
+                acc.token_expires_at = refreshed["expires_at"]
+                acc.last_refreshed_at = now
+                acc.connection_status = "CONNECTED"
+                acc.last_error = None
+                dirty = True
+            except Exception as refresh_err:
+                logger.warning("Auto-refresh failed for %s: %s", acc.username, refresh_err)
+
+        computed_status = _determine_account_status(acc)
+        conn_status = getattr(acc, "connection_status", "CONNECTED") or "CONNECTED"
+        if not acc.is_active or conn_status == "REAUTHORIZATION_REQUIRED":
+            conn_status = "REAUTHORIZATION_REQUIRED"
+        elif is_expired and conn_status == "CONNECTED":
+            conn_status = "EXPIRED"
+
+        is_connected = conn_status == "CONNECTED" and acc.is_active
+        needs_reconnect = conn_status in ("RECONNECT_REQUIRED", "EXPIRED", "REVOKED", "REAUTHORIZATION_REQUIRED")
+
         acc_dict = {
             "id": acc.id,
             "workspace_id": acc.workspace_id,
             "user_id": acc.user_id,
             "ig_user_id": acc.ig_user_id,
+            "ig_business_account_id": getattr(acc, "ig_business_account_id", None) or acc.ig_user_id,
             "username": acc.username,
             "account_type": acc.account_type,
-            "follower_count": acc.follower_count,
-            "profile_pic_url": acc.profile_pic_url,
+            "follower_count": getattr(acc, "followers_count", None) or acc.follower_count or 0,
+            "profile_pic_url": getattr(acc, "profile_picture_url", None) or acc.profile_pic_url,
             "token_expires_at": acc.token_expires_at,
             "is_active": acc.is_active,
+            "is_connected": is_connected,
+            "needs_reconnect": needs_reconnect,
+            "last_error": getattr(acc, "last_error", None),
             "auth_method": getattr(acc, "auth_method", "META_INSTAGRAM_OAUTH"),
-            "connection_status": getattr(acc, "connection_status", "CONNECTED"),
+            "connection_status": conn_status,
             "last_validated_at": getattr(acc, "last_validated_at", None),
             "last_refreshed_at": getattr(acc, "last_refreshed_at", None),
             "last_error_code": getattr(acc, "last_error_code", None),
             "connected_at": acc.connected_at,
-            "status": _determine_account_status(acc),
+            "status": computed_status,
         }
         out.append(InstagramAccountOut(**acc_dict))
+
+    if dirty:
+        await db.commit()
+
     return out
 
 def _normalize_media_item(item: Dict[str, Any]) -> Dict[str, Any]:
@@ -520,7 +613,7 @@ async def get_connect_url(
         )
     state = generate_oauth_state(workspace.id, user.id)
     url = MetaOAuth.get_authorization_url(state=state, redirect_uri=redirect_uri)
-    return {"authorization_url": url, "state": state}
+    return {"authorization_url": url, "url": url, "state": state}
 
 @router.post("/oauth/callback", response_model=InstagramAccountOut)
 async def handle_oauth_callback(
@@ -534,6 +627,7 @@ async def handle_oauth_callback(
     queries Meta Graph API for connected Instagram Business Account details,
     and upserts InstagramAccount record with encrypted token and expiration date.
     """
+    await set_rls_context(db, user.id, workspace.id)
     # 0. Validate redirect_uri destination if supplied
     if data.redirect_uri and not _is_allowed_redirect_uri(data.redirect_uri):
         raise HTTPException(
@@ -542,7 +636,8 @@ async def handle_oauth_callback(
         )
 
     # 1. Verify CSRF OAuth state (bound to workspace and user with 15m expiration)
-    if not data.state or not verify_oauth_state(data.state, workspace.id, user.id):
+    state_valid = verify_oauth_state(data.state, workspace.id, user.id) or InstagramOAuthService.verify_signed_state(data.state, str(workspace.id))
+    if not data.state or not state_valid:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Invalid or missing OAuth state parameter (CSRF protection failed)."

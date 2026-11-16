@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from typing import Dict, Any, List, Optional
 from sqlalchemy import select, update, or_, case, func, text
 
-from app.core.database import get_db_session
+from app.core.database import get_db_session, AsyncSessionLocal
 from app.core.encryption import decrypt_token
 from app.core.plans import get_plan_config
-from app.core.logging import log_diagnostic_event, redact_string
+from app.core.logging import log_diagnostic_event, redact_string, log_event
 from app.engine.flow_engine import FlowEngine
 from app.integrations.instagram.client import MetaGraphClient
+from app.integrations.instagram.follower_status import FollowerStatusService
 from app.models import (
     InstagramAccount,
     Automation,
@@ -22,7 +23,8 @@ from app.models import (
     AnalyticsEvent,
     Workspace,
     PostUsage,
-    AutomationRun
+    AutomationRun,
+    AutomationExecution,
 )
 
 logger = logging.getLogger("process_comment")
@@ -221,10 +223,309 @@ async def _update_webhook_event(session, event_id: str, provider_id: Optional[st
             webhook_event.error = redact_string(error)[:1000]
         webhook_event.processed_at = datetime.now(timezone.utc)
 
+async def _process_comment_job_v2(
+    ctx: Dict[str, Any],
+    webhook_event_id: str,
+    entry_ig_id: str,
+    comment_payload: Dict[str, Any],
+) -> Dict[str, Any]:
+    correlation_id = f"comment_evt_{webhook_event_id or comment_payload.get('id', 'unknown')}".strip()
+    session_factory = ctx.get("db_session_factory") or AsyncSessionLocal
+
+    async with session_factory() as db:
+        event_record = None
+        if webhook_event_id:
+            try:
+                evt_uuid = uuid.UUID(str(webhook_event_id))
+                event_record = (
+                    await db.execute(select(WebhookEvent).where(WebhookEvent.id == evt_uuid))
+                ).scalar_one_or_none()
+            except ValueError:
+                event_record = None
+
+            if event_record and event_record.status == "PROCESSED":
+                return {"status": "duplicate_skipped", "webhook_event_id": webhook_event_id}
+
+            if event_record:
+                event_record.status = "PROCESSING"
+                await db.commit()
+
+        # Stage 1: Extract Comment Details
+        comment_id = str(comment_payload.get("id") or "").strip()
+        comment_text = str(comment_payload.get("text") or "").strip()
+        from_obj = comment_payload.get("from") or {}
+        commenter_id = str(from_obj.get("id") or "").strip()
+        commenter_username = str(from_obj.get("username") or "").strip()
+        media_obj = comment_payload.get("media") or {}
+        media_id = str(media_obj.get("id") or "").strip()
+
+        log_event(
+            logger,
+            "COMMENT_EVENT_EXTRACTED",
+            status="EXTRACTED" if (comment_id and commenter_id) else "INVALID",
+            correlation_id=correlation_id,
+            entry_ig_id=entry_ig_id,
+            comment_id=comment_id,
+            media_id=media_id,
+            commenter_id=commenter_id,
+            has_text=bool(comment_text),
+        )
+
+        if not comment_id or not commenter_id or not comment_text:
+            if event_record:
+                event_record.status = "IGNORED"
+                await db.commit()
+            return {"status": "ignored", "reason": "empty_or_incomplete_comment"}
+
+        # Stage 2: Identify Instagram Account (match ig_user_id OR ig_business_account_id)
+        acct_stmt = select(InstagramAccount).where(
+            or_(
+                InstagramAccount.ig_user_id == str(entry_ig_id),
+                InstagramAccount.ig_business_account_id == str(entry_ig_id),
+            )
+        )
+        account = (await db.execute(acct_stmt)).scalar_one_or_none()
+        if not account:
+            log_event(
+                logger,
+                "AUTOMATION_FAILURE",
+                status="ACCOUNT_NOT_FOUND",
+                correlation_id=correlation_id,
+                level=logging.ERROR,
+                entry_ig_id=entry_ig_id,
+                comment_id=comment_id,
+            )
+            if event_record:
+                event_record.status = "FAILED"
+                await db.commit()
+            return {"status": "error", "reason": "account_not_found"}
+
+        # Ignore self-comments from the business account itself
+        if commenter_id in (account.ig_user_id, getattr(account, "ig_business_account_id", None)) or (
+            commenter_username and commenter_username.lower() == (account.username or "").lower()
+        ):
+            if event_record:
+                event_record.status = "IGNORED"
+                await db.commit()
+            return {"status": "ignored_self_comment"}
+
+        try:
+            access_token = decrypt_token(account.access_token_encrypted)
+        except ValueError as err:
+            account.connection_status = "RECONNECT_REQUIRED"
+            account.is_connected = False
+            account.last_error = str(err)
+            if event_record:
+                event_record.status = "FAILED"
+            await db.commit()
+            log_event(
+                logger,
+                "AUTOMATION_FAILURE",
+                status="TOKEN_DECRYPT_ERROR",
+                correlation_id=correlation_id,
+                level=logging.ERROR,
+                instagram_account_id=str(account.id),
+            )
+            return {"status": "error", "reason": "token_decryption_failed"}
+
+        # Stage 3: Fetch Active Automations for this Instagram Account
+        auto_stmt = (
+            select(Automation)
+            .where(
+                Automation.workspace_id == account.workspace_id,
+                Automation.instagram_account_id == account.id,
+                Automation.status == "ACTIVE",
+                Automation.is_active.is_(True),
+            )
+            .order_by(Automation.created_at.desc())
+        )
+        automations = list((await db.execute(auto_stmt)).scalars().all())
+        log_event(
+            logger,
+            "AUTOMATION_LOOKUP",
+            status="FOUND" if automations else "NONE_ACTIVE",
+            correlation_id=correlation_id,
+            instagram_account_id=str(account.id),
+            active_automation_count=len(automations),
+        )
+
+        if not automations:
+            if event_record:
+                event_record.status = "PROCESSED"
+                await db.commit()
+            return {"status": "no_active_automations"}
+
+        # Upsert Contact
+        contact = (
+            await db.execute(
+                select(Contact).where(
+                    Contact.workspace_id == account.workspace_id,
+                    Contact.ig_user_id == commenter_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if not contact:
+            contact = Contact(
+                workspace_id=account.workspace_id,
+                instagram_account_id=account.id,
+                ig_user_id=commenter_id,
+                username=commenter_username or f"user_{commenter_id}",
+                follower_status="UNKNOWN",
+            )
+            db.add(contact)
+            await db.flush()
+
+        executed_results = []
+
+        for auto in automations:
+            # Check per-(automation_id, comment_id) idempotency table
+            existing_exec = (
+                await db.execute(
+                    select(AutomationExecution).where(
+                        AutomationExecution.automation_id == auto.id,
+                        AutomationExecution.comment_id == comment_id,
+                    )
+                )
+            ).scalar_one_or_none()
+            if existing_exec and existing_exec.execution_status in ("SUCCESS", "FOLLOW_GATE_SENT"):
+                continue
+
+            flow_def = dict(auto.flow_definition or {})
+            trigger_cfg = dict(flow_def.get("trigger") or {})
+            trigger_cfg.setdefault("media_id", getattr(auto, "media_id", "ALL"))
+            trigger_cfg.setdefault("trigger_type", getattr(auto, "trigger_type", "SPECIFIC_WORDS"))
+            trigger_cfg.setdefault("match_mode", getattr(auto, "match_mode", "CONTAINS"))
+            trigger_cfg.setdefault("keywords", getattr(auto, "keywords", []))
+            flow_def["trigger"] = trigger_cfg
+
+            follow_cond = getattr(auto, "follow_condition", None) or flow_def.get("follow_condition") or {}
+            requires_follow = bool(follow_cond.get("enabled")) or any(
+                c.get("type") in ("IS_FOLLOWER", "FOLLOW_CHECK", "FOLLOW_THE_PAGE") and c.get("enabled", True)
+                for c in flow_def.get("conditions", [])
+            )
+
+            follower_info = {
+                "status": contact.follower_status or "UNKNOWN",
+                "is_following": contact.follower_status == "FOLLOWING",
+                "limitation": None,
+            }
+            if requires_follow:
+                follower_info = await FollowerStatusService.check_follower_status(
+                    commenter_ig_id=commenter_id,
+                    access_token=access_token,
+                    correlation_id=correlation_id,
+                )
+                contact.follower_status = follower_info["status"]
+
+            event_context = {
+                "workspace_id": str(account.workspace_id),
+                "automation_id": str(auto.id),
+                "instagram_account_id": str(account.id),
+                "ig_business_id": account.ig_user_id,
+                "access_token": access_token,
+                "comment_id": comment_id,
+                "comment_text": comment_text,
+                "commenter_id": commenter_id,
+                "commenter_username": commenter_username,
+                "media_id": media_id,
+                "follower_status": follower_info["status"],
+                "follower_limitation": follower_info.get("limitation"),
+            }
+
+            res = await FlowEngine.execute(
+                flow_definition=flow_def,
+                event_context=event_context,
+                correlation_id=correlation_id,
+            )
+
+            if res.get("status") in ("COMPLETED", "FOLLOW_PROMPT_SENT"):
+                auto.stats_triggered = (auto.stats_triggered or 0) + 1
+                if res.get("dm_sent"):
+                    auto.stats_dms_sent = (auto.stats_dms_sent or 0) + 1
+                if res.get("comment_replied"):
+                    auto.stats_comments_replied = (auto.stats_comments_replied or 0) + 1
+
+                exec_status = "SUCCESS" if res["status"] == "COMPLETED" else "FOLLOW_GATE_SENT"
+                db.add(
+                    AutomationExecution(
+                        workspace_id=account.workspace_id,
+                        automation_id=auto.id,
+                        instagram_account_id=account.id,
+                        comment_id=comment_id,
+                        media_id=media_id,
+                        commenter_ig_id=commenter_id,
+                        trigger_type=res.get("trigger_type") or auto.trigger_type,
+                        matched_keyword=res.get("matched_keyword"),
+                        follower_status=follower_info["status"],
+                        execution_status=exec_status,
+                        error_message=res.get("limitation"),
+                    )
+                )
+                db.add(
+                    AnalyticsEvent(
+                        workspace_id=account.workspace_id,
+                        automation_id=auto.id,
+                        event_type=f"AUTOMATION_{res['status']}",
+                        event_metadata={
+                            "comment_id": comment_id,
+                            "media_id": media_id,
+                            "matched_keyword": res.get("matched_keyword"),
+                            "follower_status": follower_info["status"],
+                            "limitation": res.get("limitation"),
+                        },
+                    )
+                )
+                log_event(
+                    logger,
+                    "AUTOMATION_SUCCESS",
+                    status=res["status"],
+                    correlation_id=correlation_id,
+                    automation_id=str(auto.id),
+                    comment_id=comment_id,
+                    media_id=media_id,
+                    matched_keyword=res.get("matched_keyword"),
+                    dm_sent=res.get("dm_sent"),
+                    comment_replied=res.get("comment_replied"),
+                )
+                executed_results.append({
+                    "automation_id": str(auto.id),
+                    "status": res["status"],
+                    "matched_keyword": res.get("matched_keyword"),
+                    "follower_status": follower_info["status"],
+                    "limitation": res.get("limitation"),
+                })
+                # Stop after first matching automation to avoid duplicate DMs on the same comment
+                break
+
+            elif res.get("status") == "FAILED":
+                log_event(
+                    logger,
+                    "AUTOMATION_FAILURE",
+                    status="ACTION_EXECUTION_FAILED",
+                    correlation_id=correlation_id,
+                    level=logging.ERROR,
+                    automation_id=str(auto.id),
+                    comment_id=comment_id,
+                    errors=res.get("errors"),
+                )
+
+        if event_record:
+            event_record.status = "PROCESSED"
+            event_record.processed_at = datetime.now(timezone.utc)
+
+        await db.commit()
+        return {
+            "status": "processed",
+            "comment_id": comment_id,
+            "executed_automations": executed_results,
+        }
+
+
 async def process_comment_job(
     ctx: Dict[str, Any],
     event_id: Any,
-    event_data: Optional[Dict[str, Any]] = None
+    event_data: Optional[Dict[str, Any]] = None,
+    comment_payload: Optional[Dict[str, Any]] = None,
 ) -> Dict[str, Any]:
     """
     Job processing an incoming Instagram comment webhook event:
@@ -235,6 +536,14 @@ async def process_comment_job(
     5. Records Messages, AnalyticsEvent, and updates Automation stats.
     6. Updates WebhookEvent status to PROCESSED.
     """
+    if comment_payload is not None:
+        return await _process_comment_job_v2(
+            ctx=ctx,
+            webhook_event_id=str(event_id) if event_id else "",
+            entry_ig_id=str(event_data or ""),
+            comment_payload=comment_payload,
+        )
+
     if isinstance(event_id, dict) and event_data is None:
         event_data = event_id
         event_id = str(event_data.get("id") or event_data.get("event_id") or event_data.get("provider_event_id") or uuid.uuid4())
@@ -267,7 +576,12 @@ async def process_comment_job(
                     pass
 
             if not account and business_ig_id:
-                stmt_acc = select(InstagramAccount).where(InstagramAccount.ig_user_id == str(business_ig_id))
+                stmt_acc = select(InstagramAccount).where(
+                    or_(
+                        InstagramAccount.ig_user_id == str(business_ig_id),
+                        InstagramAccount.ig_business_account_id == str(business_ig_id),
+                    )
+                )
                 res_acc = await session.execute(stmt_acc)
                 account = res_acc.scalar_one_or_none()
 

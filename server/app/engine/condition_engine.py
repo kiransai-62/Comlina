@@ -1,5 +1,5 @@
 # server/app/engine/condition_engine.py
-from typing import Dict, Any, Tuple
+from typing import Dict, Any, List, Tuple
 
 class ConditionEngine:
     """
@@ -10,6 +10,49 @@ class ConditionEngine:
     - UNKNOWN
     - CHECK_UNAVAILABLE
     """
+    @classmethod
+    def evaluate(cls, conditions: List[Dict[str, Any]], event_context: Dict[str, Any]) -> Dict[str, Any]:
+        if not conditions:
+            return {"passed": True, "follow_gate_required": False, "reason": "NO_CONDITIONS"}
+
+        for cond in conditions:
+            if not cond.get("enabled", True):
+                continue
+
+            cond_type = str(cond.get("type") or "").upper()
+            if cond_type in ("IS_FOLLOWER", "FOLLOW_CHECK", "FOLLOW_THE_PAGE"):
+                follower_status = str(event_context.get("follower_status") or "UNKNOWN").upper()
+                if follower_status == "FOLLOWING":
+                    continue
+
+                if follower_status == "NOT_FOLLOWING":
+                    return {
+                        "passed": False,
+                        "follow_gate_required": True,
+                        "follower_status": "NOT_FOLLOWING",
+                        "prompt_message": cond.get("prompt_message")
+                        or "Please follow our page first, then tap the button below to receive your link!",
+                        "button_title": cond.get("button_title") or "I'm Following ✅",
+                        "reason": "USER_NOT_FOLLOWING",
+                    }
+
+                # follower_status is CHECK_UNAVAILABLE or UNKNOWN:
+                # Never falsely mark as FOLLOWING! Report the limitation explicitly.
+                strict_policy = str(cond.get("unavailable_policy") or "SEND_FOLLOW_GATE").upper()
+                return {
+                    "passed": False,
+                    "follow_gate_required": strict_policy == "SEND_FOLLOW_GATE",
+                    "follower_status": follower_status,
+                    "limitation": event_context.get("follower_limitation")
+                    or "Meta API does not expose follower status for this comment event.",
+                    "prompt_message": cond.get("prompt_message")
+                    or "Please make sure you follow our page, then tap the button below to unlock your DM!",
+                    "button_title": cond.get("button_title") or "I'm Following ✅",
+                    "reason": f"FOLLOWER_{follower_status}",
+                }
+
+        return {"passed": True, "follow_gate_required": False, "reason": "ALL_CONDITIONS_PASSED"}
+
     @staticmethod
     def evaluate_follower_condition(
         condition_config: Dict[str, Any],

@@ -1,6 +1,6 @@
 from typing import TYPE_CHECKING
 from .client import MetaGraphClient
-from .oauth import MetaOAuth
+from .oauth import MetaOAuth, InstagramOAuthService
 from .messaging import InstagramMessaging
 from .comments import InstagramComments
 from .follower_status import InstagramFollowerService, FollowerStatus

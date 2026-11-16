@@ -15,6 +15,86 @@ class FlowEngine:
     Supports both v1 DAGs and v2 Studio playbooks (Comment-to-DM, Comment Reply, DM Reply).
     """
 
+    @classmethod
+    async def execute(
+        cls,
+        flow_definition: Dict[str, Any],
+        event_context: Dict[str, Any],
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        trigger_cfg = flow_definition.get("trigger") or {}
+        conditions_cfg = flow_definition.get("conditions") or []
+        actions_cfg = flow_definition.get("actions") or []
+
+        # 1. Evaluate Trigger (Media ID + Specific Words / Any Word)
+        trig_res = TriggerEngine.evaluate(
+            trigger_config=trigger_cfg,
+            event_context=event_context,
+            correlation_id=correlation_id,
+        )
+        if not trig_res.get("matched"):
+            return {
+                "status": "SKIPPED",
+                "reason": trig_res.get("reason", "TRIGGER_NOT_MATCHED"),
+                "dm_sent": False,
+                "comment_replied": False,
+            }
+
+        # 2. Evaluate Conditions (Follow the Page check)
+        cond_res = ConditionEngine.evaluate(conditions_cfg, event_context)
+        if not cond_res.get("passed"):
+            if cond_res.get("follow_gate_required"):
+                gate_dm = await ActionEngine.send_private_reply_dm(
+                    ig_business_id=event_context.get("ig_business_id", ""),
+                    comment_id=event_context.get("comment_id"),
+                    commenter_id=event_context.get("commenter_id"),
+                    message_text=cond_res["prompt_message"],
+                    buttons=[
+                        {
+                            "type": "postback",
+                            "title": cond_res.get("button_title", "I'm Following ✅"),
+                            "payload": f"VERIFY_FOLLOW:{event_context.get('automation_id')}:{event_context.get('comment_id')}",
+                        }
+                    ],
+                    access_token=event_context["access_token"],
+                    correlation_id=correlation_id,
+                )
+                return {
+                    "status": "FOLLOW_PROMPT_SENT" if gate_dm["success"] else "FAILED",
+                    "reason": cond_res.get("reason"),
+                    "limitation": cond_res.get("limitation"),
+                    "matched_keyword": trig_res.get("matched_keyword"),
+                    "trigger_type": trig_res.get("trigger_type"),
+                    "dm_sent": gate_dm["success"],
+                    "comment_replied": False,
+                    "errors": [] if gate_dm["success"] else [gate_dm.get("error", "Follow gate DM failed")],
+                }
+
+            return {
+                "status": "CONDITION_BLOCKED",
+                "reason": cond_res.get("reason"),
+                "limitation": cond_res.get("limitation"),
+                "matched_keyword": trig_res.get("matched_keyword"),
+                "trigger_type": trig_res.get("trigger_type"),
+                "dm_sent": False,
+                "comment_replied": False,
+            }
+
+        # 3. Execute Configured Actions
+        act_res = await ActionEngine.execute_actions(
+            actions=actions_cfg,
+            event_context=event_context,
+            correlation_id=correlation_id,
+        )
+        return {
+            "status": "COMPLETED" if act_res["success"] else "FAILED",
+            "matched_keyword": trig_res.get("matched_keyword"),
+            "trigger_type": trig_res.get("trigger_type"),
+            "dm_sent": act_res["dm_sent"],
+            "comment_replied": act_res["comment_replied"],
+            "errors": act_res["errors"],
+        }
+
     @staticmethod
     def _extract_conditions(flow_definition: Dict[str, Any]) -> List[Dict[str, Any]]:
         if "conditions" in flow_definition and isinstance(flow_definition["conditions"], list):

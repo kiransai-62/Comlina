@@ -227,6 +227,25 @@ async def get_current_workspace(
 
     return workspace
 
+async def set_rls_context(db: AsyncSession, user_id: uuid.UUID, workspace_id: Optional[uuid.UUID] = None) -> None:
+    """
+    Sets session variables for PostgreSQL Row-Level Security (RLS).
+    Executes SELECT set_config('app.current_user_id', :uid, true)
+    and optionally set_config('app.current_workspace_id', :wid, true).
+    On SQLite or other dialects, safely ignores if not supported.
+    """
+    from sqlalchemy import text
+    try:
+        bind = db.bind
+        dialect_name = bind.dialect.name if bind else "postgresql"
+        if dialect_name == "postgresql":
+            await db.execute(text("SELECT set_config('app.current_user_id', :uid, true)"), {"uid": str(user_id)})
+            if workspace_id:
+                await db.execute(text("SELECT set_config('app.current_workspace_id', :wid, true)"), {"wid": str(workspace_id)})
+    except Exception as exc:
+        logger.debug(f"[RLS] set_rls_context note: {exc}")
+
+
 async def require_workspace_owner(
     user: User = Depends(get_current_user),
     workspace: Workspace = Depends(get_current_workspace),

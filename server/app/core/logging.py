@@ -211,6 +211,62 @@ def setup_logging(level: int = logging.INFO, force_json: bool = False) -> None:
 
 diagnostic_logger = logging.getLogger("diagnostic")
 
+OBSERVABILITY_EVENTS = {
+    "INSTAGRAM_CONNECTION_SUCCESS",
+    "INSTAGRAM_TOKEN_VALIDATION",
+    "INSTAGRAM_TOKEN_REFRESH",
+    "INSTAGRAM_WEBHOOK_RECEIVED",
+    "INSTAGRAM_WEBHOOK_VALIDATED",
+    "COMMENT_EVENT_EXTRACTED",
+    "AUTOMATION_LOOKUP",
+    "MEDIA_ID_MATCH",
+    "TRIGGER_MATCH",
+    "FOLLOW_CONDITION_RESULT",
+    "ACTION_EXECUTION",
+    "DATABASE_INSERT",
+    "DATABASE_UPDATE",
+    "AUTOMATION_SUCCESS",
+    "AUTOMATION_FAILURE",
+}
+
+
+TOKEN_PATTERN = re.compile(r"(IG[A-Za-z0-9._\-]{15,}|EA[A-Za-z0-9._\-]{15,}|eyJ[A-Za-z0-9._\-]{20,})")
+
+
+def _redact_value(key: str, value: Any) -> Any:
+    if key.lower() in SENSITIVE_KEYS:
+        return "[REDACTED]"
+    if isinstance(value, str):
+        return TOKEN_PATTERN.sub("[REDACTED_TOKEN]", value)
+    if isinstance(value, dict):
+        return {k: _redact_value(k, v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_redact_value(key, item) for item in value]
+    return value
+
+
+def log_event(
+    logger: logging.Logger,
+    event_name: str,
+    status: str = "OK",
+    correlation_id: Optional[str] = None,
+    level: int = logging.INFO,
+    **context: Any,
+) -> Dict[str, Any]:
+    """
+    Emits a structured, token-redacted observability log entry for Comlina pipeline stages.
+    """
+    safe_context = {k: _redact_value(k, v) for k, v in context.items()}
+    payload = {
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "event": event_name,
+        "status": status,
+        "correlation_id": correlation_id or safe_context.pop("request_id", None) or "system",
+        **safe_context,
+    }
+    logger.log(level, json.dumps(payload, default=str))
+    return payload
+
 
 def log_diagnostic_event(
     stage: str,

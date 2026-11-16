@@ -1,82 +1,119 @@
 # server/app/core/encryption.py
 import base64
 import hashlib
-from typing import List
-from cryptography.fernet import Fernet, MultiFernet, InvalidToken
-from app.core.config import settings
+import logging
+from typing import List, Any
+from cryptography.fernet import Fernet, InvalidToken, MultiFernet
+
+logger = logging.getLogger(__name__)
 
 
-def _normalize_key(key: str) -> bytes:
+def _derive_fernet_key(secret_material: str) -> bytes:
+    digest = hashlib.sha256(secret_material.encode("utf-8")).digest()
+    return base64.urlsafe_b64encode(digest)
+
+
+def _normalize_key(key: Any) -> bytes:
     key_bytes = key.encode("utf-8") if isinstance(key, str) else key
     try:
         decoded = base64.urlsafe_b64decode(key_bytes)
-        if len(decoded) != 32:
-            key_bytes = base64.urlsafe_b64encode(decoded.ljust(32, b"0")[:32])
+        if len(decoded) == 32:
+            return key_bytes
+        return base64.urlsafe_b64encode(decoded.ljust(32, b"0")[:32])
     except Exception:
-        key_bytes = base64.urlsafe_b64encode(hashlib.sha256(key_bytes).digest())
-    return key_bytes
+        return _derive_fernet_key(key if isinstance(key, str) else key.decode("utf-8", "ignore"))
+
+
+def _get_config():
+    try:
+        from app.core.config import worker_settings
+        return worker_settings
+    except (ImportError, AttributeError):
+        pass
+    try:
+        from app.core.config import settings
+        return settings
+    except Exception:
+        return None
+
+
+def build_fernet_cipher() -> MultiFernet:
+    cfg = _get_config()
+    keys: List[Fernet] = []
+
+    raw_primary = (
+        getattr(cfg, "ENCRYPTION_KEY", None)
+        or getattr(cfg, "TOKEN_ENCRYPTION_KEY", None)
+        or ""
+    ).strip() if cfg else ""
+
+    if raw_primary:
+        try:
+            keys.append(Fernet(_normalize_key(raw_primary)))
+        except Exception:
+            keys.append(Fernet(_derive_fernet_key(raw_primary)))
+    else:
+        # Derive deterministically from JWT_SECRET or META_APP_SECRET so restarts never wipe tokens
+        fallback_seed = (
+            getattr(cfg, "SUPABASE_JWT_SECRET", None)
+            or getattr(cfg, "JWT_SECRET", None)
+            or getattr(cfg, "META_APP_SECRET", None)
+            or "comlina-deterministic-dev-key-seed"
+        ) if cfg else "comlina-deterministic-dev-key-seed"
+        keys.append(Fernet(_derive_fernet_key(fallback_seed)))
+
+    raw_old = (
+        getattr(cfg, "OLD_ENCRYPTION_KEYS", None)
+        or getattr(cfg, "TOKEN_ENCRYPTION_KEYS", None)
+        or ""
+    ).strip() if cfg else ""
+
+    if raw_old:
+        for item in raw_old.split(","):
+            cleaned = item.strip()
+            if not cleaned:
+                continue
+            try:
+                keys.append(Fernet(_normalize_key(cleaned)))
+            except Exception:
+                keys.append(Fernet(_derive_fernet_key(cleaned)))
+
+    return MultiFernet(keys)
 
 
 def _get_multi_fernet() -> MultiFernet:
-    keys = settings.get_encryption_keys()
-    if not keys:
-        if settings.TOKEN_ENCRYPTION_KEY:
-            keys = [settings.TOKEN_ENCRYPTION_KEY]
-        else:
-            raise ValueError("TOKEN_ENCRYPTION_KEY environment variable is not configured")
-    fernets = [Fernet(_normalize_key(k)) for k in keys]
-    return MultiFernet(fernets)
+    return build_fernet_cipher()
 
 
 def _get_fernet() -> Fernet:
-    """Backwards compatibility helper returning Fernet for primary key."""
-    keys = settings.get_encryption_keys()
-    key = keys[0] if keys else settings.TOKEN_ENCRYPTION_KEY
-    if not key:
-        raise ValueError("TOKEN_ENCRYPTION_KEY environment variable is not configured")
-    return Fernet(_normalize_key(key))
+    mf = build_fernet_cipher()
+    return mf._fernets[0]
 
 
-def encrypt_token(plaintext: str) -> str:
-    """
-    Encrypts a plaintext token using MultiFernet authenticated symmetric encryption.
-    Always encrypts with the primary (first) key.
-    Returns URL-safe base64 encoded ciphertext string.
-    """
-    if not plaintext:
-        return ""
-    mf = _get_multi_fernet()
-    encrypted_bytes = mf.encrypt(plaintext.encode("utf-8"))
-    return encrypted_bytes.decode("utf-8")
+def encrypt_token(plain_token: str) -> str:
+    if not plain_token or not plain_token.strip():
+        raise ValueError("Cannot encrypt an empty token.")
+    cipher = build_fernet_cipher()
+    return cipher.encrypt(plain_token.strip().encode("utf-8")).decode("utf-8")
 
 
-def decrypt_token(ciphertext: str, allow_fallback: bool = False) -> str:
-    """
-    Decrypts a MultiFernet ciphertext back to plaintext.
-    Supports key rotation: tries all configured keys in order (primary first, then fallback keys).
-    If ciphertext cannot be decrypted and allow_fallback is True, returns original string.
-    Otherwise raises InvalidToken.
-    """
-    if not ciphertext:
-        return ""
-    mf = _get_multi_fernet()
+def decrypt_token(encrypted_token: str, allow_fallback: bool = False) -> str:
+    if not encrypted_token or not encrypted_token.strip():
+        raise ValueError("Cannot decrypt an empty token.")
+    cipher = build_fernet_cipher()
     try:
-        decrypted_bytes = mf.decrypt(ciphertext.encode("utf-8"))
-        return decrypted_bytes.decode("utf-8")
-    except (InvalidToken, Exception):
+        return cipher.decrypt(encrypted_token.strip().encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
         if allow_fallback:
-            return ciphertext
-        raise
+            return encrypted_token
+        raise ValueError("Stored Instagram access token failed decryption (key mismatch or corrupted token).") from exc
 
 
-def rotate_token(ciphertext: str) -> str:
-    """
-    Re-encrypts a ciphertext with the primary encryption key using MultiFernet.rotate.
-    If the ciphertext was encrypted under a secondary/fallback key, re-encrypts it under the primary key.
-    If already encrypted under the primary key, refreshes the timestamp/IV.
-    """
-    if not ciphertext:
-        return ""
-    mf = _get_multi_fernet()
-    rotated_bytes = mf.rotate(ciphertext.encode("utf-8"))
-    return rotated_bytes.decode("utf-8")
+def rotate_token(encrypted_token: str) -> str:
+    if not encrypted_token or not encrypted_token.strip():
+        raise ValueError("Cannot rotate an empty token.")
+    cipher = build_fernet_cipher()
+    try:
+        return cipher.rotate(encrypted_token.strip().encode("utf-8")).decode("utf-8")
+    except InvalidToken as exc:
+        raise ValueError("Stored token failed rotation (key mismatch or corrupted token).") from exc

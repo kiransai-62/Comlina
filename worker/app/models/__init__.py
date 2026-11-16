@@ -26,6 +26,7 @@ from server.app.models import (
     PostUsage,
     PaymentOrder,
     AutomationRun,
+    AutomationExecution,
     utc_now,
 )
 
@@ -45,5 +46,6 @@ __all__ = [
     "PostUsage",
     "PaymentOrder",
     "AutomationRun",
+    "AutomationExecution",
     "utc_now",
 ]

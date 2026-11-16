@@ -1,9 +1,16 @@
 import urllib.parse
 import httpx
 import logging
+import hashlib
+import hmac
+import secrets
+import time
+from datetime import datetime, timedelta, timezone
 from typing import Dict, Any, Optional
+from urllib.parse import urlencode
+
 from app.core.config import settings
-from app.core.logging import redact_data, redact_string
+from app.core.logging import redact_data, redact_string, log_event
 
 logger = logging.getLogger("meta_oauth")
 
@@ -12,9 +19,257 @@ IG_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
 IG_GRAPH = "https://graph.instagram.com"
 IG_SCOPES = "instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments,instagram_business_content_publish"
 
+IG_OAUTH_AUTHORIZE_URL = "https://www.instagram.com/oauth/authorize"
+IG_SHORT_LIVED_TOKEN_URL = "https://api.instagram.com/oauth/access_token"
+IG_GRAPH_URL = "https://graph.instagram.com"
+
+REQUIRED_SCOPES = [
+    "instagram_business_basic",
+    "instagram_business_manage_messages",
+    "instagram_business_manage_comments",
+    "instagram_business_content_publish",
+]
+
 
 class MetaOAuthError(Exception):
     """Safe-to-show message."""
+
+
+class InstagramOAuthService:
+    @staticmethod
+    def create_signed_state(workspace_id: str, user_id: str) -> str:
+        nonce = secrets.token_urlsafe(12)
+        ts = str(int(time.time()))
+        raw = f"{workspace_id}:{user_id}:{nonce}:{ts}"
+        key = (getattr(settings, "SUPABASE_JWT_SECRET", None) or getattr(settings, "JWT_SECRET", None) or getattr(settings, "META_APP_SECRET", None) or "comlina-state-key").encode("utf-8")
+        sig = hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()
+        return f"{raw}:{sig}"
+
+    @staticmethod
+    def verify_signed_state(state: str, expected_workspace_id: str, max_age: int = 1800) -> bool:
+        try:
+            parts = state.split(":")
+            if len(parts) == 5:
+                ws_id, usr_id, nonce, ts_str, sig = parts
+                raw = f"{ws_id}:{usr_id}:{nonce}:{ts_str}"
+            elif len(parts) == 4:
+                ws_id, nonce, ts_str, sig = parts
+                raw = f"{ws_id}:{nonce}:{ts_str}"
+            else:
+                return False
+
+            if str(ws_id) != str(expected_workspace_id):
+                return False
+            if abs(time.time() - int(ts_str)) > max_age:
+                return False
+
+            key = (getattr(settings, "SUPABASE_JWT_SECRET", None) or getattr(settings, "JWT_SECRET", None) or getattr(settings, "META_APP_SECRET", None) or "comlina-state-key").encode("utf-8")
+            expected_sig = hmac.new(key, raw.encode("utf-8"), hashlib.sha256).hexdigest()
+            return hmac.compare_digest(sig, expected_sig)
+        except Exception:
+            return False
+
+    @classmethod
+    def build_authorization_url(cls, workspace_id: str, user_id: str) -> str:
+        state = cls.create_signed_state(workspace_id, user_id)
+        query = urlencode({
+            "enable_fb_login": "0",
+            "force_authentication": "1",
+            "client_id": settings.META_APP_ID,
+            "redirect_uri": settings.META_REDIRECT_URI,
+            "response_type": "code",
+            "scope": ",".join(REQUIRED_SCOPES),
+            "state": state,
+        })
+        return f"{IG_OAUTH_AUTHORIZE_URL}?{query}"
+
+    @classmethod
+    async def exchange_code_for_long_lived_token(
+        cls,
+        code: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        clean_code = code.split("#_")[0].strip()
+        async with httpx.AsyncClient(timeout=20.0) as client:
+            short_resp = await client.post(
+                IG_SHORT_LIVED_TOKEN_URL,
+                data={
+                    "client_id": settings.META_APP_ID,
+                    "client_secret": settings.META_APP_SECRET,
+                    "grant_type": "authorization_code",
+                    "redirect_uri": settings.META_REDIRECT_URI,
+                    "code": clean_code,
+                },
+            )
+            if short_resp.status_code != 200:
+                err_body = short_resp.json() if short_resp.content else {}
+                raise ValueError(
+                    err_body.get("error_message")
+                    or err_body.get("error", {}).get("message")
+                    or f"Instagram code exchange failed with HTTP {short_resp.status_code}"
+                )
+
+            short_json = short_resp.json()
+            if isinstance(short_json.get("data"), list) and short_json["data"]:
+                short_json = short_json["data"][0]
+
+            short_token = short_json.get("access_token")
+            scoped_uid = str(short_json.get("user_id") or "")
+            permissions = short_json.get("permissions", REQUIRED_SCOPES)
+            if isinstance(permissions, str):
+                permissions = [p.strip() for p in permissions.split(",") if p.strip()]
+
+            if not short_token:
+                raise ValueError("Instagram OAuth did not return an access_token.")
+
+            # Upgrade 1-hour short-lived token to 60-day long-lived token
+            ll_resp = await client.get(
+                f"{IG_GRAPH_URL}/access_token",
+                params={
+                    "grant_type": "ig_exchange_token",
+                    "client_secret": settings.META_APP_SECRET,
+                    "access_token": short_token,
+                },
+            )
+            if ll_resp.status_code == 200:
+                ll_data = ll_resp.json()
+                final_token = ll_data.get("access_token", short_token)
+                expires_in = int(ll_data.get("expires_in", 5184000))
+                token_type = "long_lived"
+            else:
+                final_token = short_token
+                expires_in = 3600
+                token_type = "short_lived"
+
+            return {
+                "access_token": final_token,
+                "token_type": token_type,
+                "expires_in": expires_in,
+                "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+                "scoped_user_id": scoped_uid,
+                "scopes": permissions,
+            }
+
+    @classmethod
+    async def refresh_long_lived_token(
+        cls,
+        access_token: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{IG_GRAPH_URL}/refresh_access_token",
+                params={
+                    "grant_type": "ig_refresh_token",
+                    "access_token": access_token,
+                },
+            )
+            if resp.status_code != 200:
+                err_data = resp.json() if resp.content else {}
+                err_code = err_data.get("error", {}).get("code")
+                err_msg = err_data.get("error", {}).get("message", f"HTTP {resp.status_code}")
+                log_event(
+                    logger,
+                    "INSTAGRAM_TOKEN_REFRESH",
+                    status="FAILED",
+                    correlation_id=correlation_id,
+                    level=logging.WARNING,
+                    error_code=err_code,
+                    reason=err_msg,
+                )
+                raise ValueError(f"Token refresh failed ({err_msg})")
+
+            data = resp.json()
+            expires_in = int(data.get("expires_in", 5184000))
+            log_event(
+                logger,
+                "INSTAGRAM_TOKEN_REFRESH",
+                status="SUCCESS",
+                correlation_id=correlation_id,
+                expires_in=expires_in,
+            )
+            return {
+                "access_token": data["access_token"],
+                "expires_in": expires_in,
+                "expires_at": datetime.now(timezone.utc) + timedelta(seconds=expires_in),
+            }
+
+    @classmethod
+    async def fetch_and_validate_profile(
+        cls,
+        access_token: str,
+        correlation_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        Fetches the user's Instagram profile and validates whether the token is active,
+        expired, or revoked (Meta Error Code 190).
+        """
+        version = getattr(settings, "META_GRAPH_API_VERSION", None) or getattr(settings, "META_API_VERSION", "v21.0")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.get(
+                f"{IG_GRAPH_URL}/{version}/me",
+                params={
+                    "fields": "id,user_id,username,name,account_type,profile_picture_url,followers_count",
+                    "access_token": access_token,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                ig_business_id = str(data.get("user_id") or data.get("id"))
+                ig_app_scoped_id = str(data.get("id") or ig_business_id)
+                log_event(
+                    logger,
+                    "INSTAGRAM_TOKEN_VALIDATION",
+                    status="VALID",
+                    correlation_id=correlation_id,
+                    ig_user_id=ig_business_id,
+                    username=data.get("username"),
+                )
+                return {
+                    "valid": True,
+                    "revoked": False,
+                    "ig_user_id": ig_business_id,
+                    "ig_business_account_id": ig_app_scoped_id,
+                    "username": data.get("username") or f"ig_{ig_business_id}",
+                    "account_type": data.get("account_type") or "BUSINESS",
+                    "profile_picture_url": data.get("profile_picture_url"),
+                    "followers_count": int(data.get("followers_count") or 0),
+                }
+
+            err_payload = resp.json() if resp.content else {}
+            error_obj = err_payload.get("error", {})
+            error_code = error_obj.get("code")
+            error_message = error_obj.get("message") or f"HTTP {resp.status_code}"
+            is_revoked = error_code in (190, 102, 10) or resp.status_code in (401, 403)
+
+            log_event(
+                logger,
+                "INSTAGRAM_TOKEN_VALIDATION",
+                status="REVOKED" if is_revoked else "TRANSIENT_ERROR",
+                correlation_id=correlation_id,
+                level=logging.WARNING,
+                error_code=error_code,
+                reason=error_message,
+            )
+            return {
+                "valid": False,
+                "revoked": is_revoked,
+                "error_code": error_code,
+                "error_message": error_message,
+            }
+
+    @classmethod
+    async def subscribe_webhooks(cls, ig_account_id: str, access_token: str) -> bool:
+        version = getattr(settings, "META_GRAPH_API_VERSION", None) or getattr(settings, "META_API_VERSION", "v21.0")
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                f"{IG_GRAPH_URL}/{version}/{ig_account_id}/subscribed_apps",
+                params={
+                    "subscribed_fields": "comments,messages,messaging_postbacks",
+                    "access_token": access_token,
+                },
+            )
+            return resp.status_code == 200 and bool(resp.json().get("success"))
 
 
 def _error_message(data: Any, fallback: str) -> str:
